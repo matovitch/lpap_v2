@@ -65,8 +65,8 @@ class FlowTask:
     def __init__(self, model: ModelConfig, config: FlowStageConfig, images: ImageSet) -> None:
         self.model = model
         self.config = config
-        # Downstream stages need encode/render fidelity at the energy-bank step count (the largest).
-        self.best_metric = f"round_trip_l2_{max(config.round_trip_steps)}"
+        # Validation analogue of the training loss: round-trip metrics alone favour barely trained fields.
+        self.best_metric = "objective"
         self.images = images
         self.device = images.device
         torch.manual_seed(config.seed)
@@ -135,7 +135,8 @@ class FlowTask:
         (``flow_matching`` also weighs ``|t| → 0``, where the halves are
         indistinguishable). ``fm_<half>_a<α>``: loss at a fixed prior weight ``α`` (bands separate the
         irreducible floor near each end from learnable error). ``round_trip_l2_<k>``:
-        encode then render with ``k`` Euler steps each.
+        encode then render with ``k`` Euler steps each. ``objective`` (best metric):
+        ``fm_euler + round_trip_weight · round_trip_l2_<round_trip_train_steps>``.
         """
         self.ema.eval()
         field = self.eval_field
@@ -153,8 +154,10 @@ class FlowTask:
             for alpha in config.band_alphas:
                 metrics[f"fm_i2e_a{alpha:g}"] = flow_matching(field, image, prior, (alpha - 1.0) * ones)
                 metrics[f"fm_e2i_a{alpha:g}"] = flow_matching(field, image, prior, (1.0 - alpha) * ones)
-            for steps in config.round_trip_steps:
+            for steps in sorted({*config.round_trip_steps, config.round_trip_train_steps}):
                 metrics[f"round_trip_l2_{steps}"] = round_trip_l2(field, image, steps)
+            trained = metrics[f"round_trip_l2_{config.round_trip_train_steps}"]
+            metrics["objective"] = metrics["fm_euler"] + config.round_trip_weight * trained
             energy = encode(field, image, max(config.round_trip_steps))
             metrics["energy_std"] = energy.std()
             metrics["energy_abs_mean"] = energy.abs().mean()

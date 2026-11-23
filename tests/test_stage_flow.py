@@ -35,7 +35,7 @@ def test_flow_stage_trains_resumes_and_exports(tmp_path):
 
     result = train(model, config, images, store)
     assert (result.step, result.reason) == (6, "target")
-    assert {"flow_matching", "fm_i2e_a0.5", "round_trip_l2_2"} <= set(result.last_validation)
+    assert {"flow_matching", "fm_i2e_a0.5", "round_trip_l2_2", "round_trip_l2_4", "objective"} <= set(result.last_validation)
     assert (tmp_path / "runs" / "flow" / "gallery.png").read_bytes().startswith(b"\x89PNG")
 
     longer = load(FlowStageConfig, "flow", {**overrides, "run.steps": 9})

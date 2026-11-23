@@ -311,8 +311,13 @@ What the loss can and cannot show (measured on the v3 bridge, see
   (weight 1, 32 images per batch, fp32, backprop through the 8 field calls)
   and pairs images with prior draws by minibatch OT. At 5k steps this takes
   4-step round-trip L2 from 0.165 to 0.0006 and 16-step from 0.016 to 0.0065,
-  for about +10 % `fm_euler` and 2.5× step time. The best checkpoint is the
-  lowest `round_trip_l2_16`.
+  for about +10 % `fm_euler` and 2.5× step time.
+- **Untrained step counts drift.** Over the 20k-step run 4-step round trips
+  stay at ≈ 4.5·10⁻⁴ while 16-step ones rise from 0.0024 (step 1k) to 0.013
+  as the field converges. Every consumer therefore integrates with the trained
+  count, 4 steps (energy bank, AE encoder and renderer). Round-trip metrics
+  alone are lowest for barely trained fields, so the best checkpoint is the
+  lowest `objective = fm_euler + round_trip_weight · round_trip_l2_4`.
 
 Validation therefore reports, on fixed images, draws and times: the Beta-weighted
 loss, `fm_euler` (loss at the Euler midpoints the integrators use), per-band
@@ -393,8 +398,8 @@ end-to-end pipeline runner.
 
 | # | Stage | Data | Trains | Frozen / absent | Loss | Budget (start) |
 | - | --- | --- | --- | --- | --- | --- |
-| 1 | Flow | images + prior draws | flow field (EMA exported) | — | §4.1 | 20k steps, batch 256, lr 3e-4 (warmup + cosine), EMA 0.999, OT coupling, round-trip loss (w 1, 4 steps); best = lowest `round_trip_l2_16` |
-| 2 | Energy bank | images | — (no params) | flow | — | 16-step i2e encode of every image |
+| 1 | Flow | images + prior draws | flow field (EMA exported) | — | §4.1 | 20k steps, batch 256, lr 3e-4 (warmup + cosine), EMA 0.999, OT coupling, round-trip loss (w 1, 4 steps); best = lowest `objective` (§4.1) |
+| 2 | Energy bank | images | — (no params) | flow | — | 4-step i2e encode of every image |
 | 3 | Surrogates (per lossy pair) | bank rows | surrogate | — | §4.2 | v3 budgets (~960k samples per pair) |
 | 4 | Decoders (per lossy pair) | bank rows, exact codes | decoder | — (no surrogate) | §4.3 | v3 budgets |
 | 5 | AE (all pairs) | images | encoder, renderer, decoders; surrogates by CE only | — | §4.6 | ~120k steps, batch 64 (try 128) |
