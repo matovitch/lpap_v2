@@ -50,12 +50,13 @@ async with cm.get_context() as ctx:
             _run.append(_target.id)
             print('edited', _target.id, _target.name)
         _previous = _target.id
-if _run:
-    async with cm.get_context() as ctx:
-        for _id in _run:
-            ctx.run_cell(_id)
+# Reinstall first so changed cells run against the new package.
 if ${reinstall}:
     os.environ['LPAP_FORCE_REINSTALL'] = '1'
     async with cm.get_context() as ctx:
         ctx.run_cell(next(c.id for c in ctx.cells if c.name == 'install'))
+if _run:
+    async with cm.get_context() as ctx:
+        for _id in _run:
+            ctx.run_cell(_id)
 "
