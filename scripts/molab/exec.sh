@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run Python in the paired molab kernel scratchpad (marimo-pair execute-code).
 # Usage: exec.sh -c 'print(1)' | exec.sh file.py | exec.sh <<'PY' ... PY
+# Never call it while any cell runs (training, bank build): it interrupts that cell.
+# Watch long cells with status.sh (file API) instead.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib.sh"
