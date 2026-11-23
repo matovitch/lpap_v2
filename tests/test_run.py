@@ -27,7 +27,8 @@ class CountingTask:
         if self.steps == self.fail_at:
             return {"loss": torch.tensor(float("nan"))}
         self.weight += 1
-        return {"loss": 1.0 / (1.0 + self.weight)}
+        sparse = {"even": float(self.weight)} if self.steps % 2 == 0 else {}
+        return {"loss": 1.0 / (1.0 + self.weight), **sparse}
 
     def validate(self):
         return {"loss": float(1.0 / (1.0 + self.weight))}
@@ -106,3 +107,5 @@ def test_train_metrics_are_averaged_over_the_log_window(tmp_path):
     run(CountingTask(), run="r", config={}, run_config=config(steps=4, log_every=2), store=store)
     logged = [value for _, value in read_series(store.local("r", LOG), "train", "loss")]
     assert logged == pytest.approx([(1 / 2 + 1 / 3) / 2, (1 / 4 + 1 / 5) / 2])
+    # Metrics reported on some steps only are averaged over those steps.
+    assert [value for _, value in read_series(store.local("r", LOG), "train", "even")] == [2.0, 4.0]

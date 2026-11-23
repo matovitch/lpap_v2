@@ -14,6 +14,8 @@ ot_coupling = true          # pair images with prior draws by minibatch OT (scip
 round_trip_weight = 1.0     # > 0 adds w · ‖render(encode(I)) − I‖² (fp32, backprop through 2k field calls)
 round_trip_batch = 32       # images of the batch used by the round-trip term
 round_trip_train_steps = 4
+round_trip_bf16 = false     # autocast the round-trip field calls (state stays fp32)
+round_trip_every = 1        # apply the term every k steps, weighted by k
 # Validation: fixed images, prior draws and times.
 validation_seed = 30123
 validation_batch_size = 256

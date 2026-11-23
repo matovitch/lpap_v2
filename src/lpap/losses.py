@@ -91,8 +91,11 @@ def ot_coupling(
     return prior[torch.as_tensor(columns, device=prior.device)]
 
 
-def round_trip_l2(field: nn.Module, image: Float[torch.Tensor, "batch 1 n"], steps: int) -> torch.Tensor:
-    """``‖render(encode(I)) − I‖²`` with ``steps`` Euler steps each way (fp32, differentiable)."""
-    from lpap.flow import encode, render
+def round_trip_l2(
+    field: nn.Module, image: Float[torch.Tensor, "batch 1 n"], steps: int, *, bf16: bool = False
+) -> torch.Tensor:
+    """``‖render(encode(I)) − I‖²`` with ``steps`` Euler steps each way (differentiable; fp32 state)."""
+    from lpap.flow import integrate
 
-    return (render(field, encode(field, image, steps), steps) - image).square().mean()
+    energy = integrate(field, image, t0=-1.0, t1=0.0, steps=steps, bf16=bf16)
+    return (integrate(field, energy, t0=0.0, t1=1.0, steps=steps, bf16=bf16) - image).square().mean()

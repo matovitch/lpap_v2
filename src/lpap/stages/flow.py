@@ -39,6 +39,8 @@ class FlowStageConfig:
     round_trip_weight: float
     round_trip_batch: int
     round_trip_train_steps: int
+    round_trip_bf16: bool
+    round_trip_every: int
     validation_seed: int
     validation_batch_size: int
     validation_batch_count: int
@@ -112,11 +114,15 @@ class FlowTask:
         with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=config.bf16):
             loss = flow_matching(self.train_field, image, prior, time)
         metrics = {"flow_matching": loss.detach()}
-        if config.round_trip_weight > 0:
+        if config.round_trip_weight > 0 and self.step % config.round_trip_every == 0:
             round_trip = round_trip_l2(
-                self.train_field, image[: config.round_trip_batch], config.round_trip_train_steps
+                self.train_field,
+                image[: config.round_trip_batch],
+                config.round_trip_train_steps,
+                bf16=config.round_trip_bf16,
             )
-            loss = loss + config.round_trip_weight * round_trip
+            # Scaled by the period so the term's average weight does not depend on it.
+            loss = loss + config.round_trip_weight * config.round_trip_every * round_trip
             metrics["round_trip_l2"] = round_trip.detach()
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()

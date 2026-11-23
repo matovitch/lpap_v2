@@ -22,6 +22,8 @@ def test_flow_stage_trains_resumes_and_exports(tmp_path):
         "ot_coupling": True,
         "round_trip_weight": 0.5,
         "round_trip_batch": 2,
+        "round_trip_bf16": True,
+        "round_trip_every": 2,
         "bf16": False,
         "run.steps": 6,
         "run.log_every": 1,

@@ -92,16 +92,17 @@ def integrate(
     t0: float,
     t1: float,
     steps: int,
+    bf16: bool = False,
 ) -> Float[torch.Tensor, "batch 1 n"]:
-    """Euler midpoint, always fp32 (autocast disabled)."""
+    """Euler midpoint. The state is fp32; field calls are fp32 unless ``bf16`` (autocast)."""
     if steps <= 0:
         raise ValueError("steps must be positive")
     delta = (t1 - t0) / steps
     values = start.float()
-    with torch.autocast(device_type=values.device.type, enabled=False):
+    with torch.autocast(device_type=values.device.type, dtype=torch.bfloat16, enabled=bf16):
         for step in range(steps):
             time = torch.full((values.shape[0],), t0 + (step + 0.5) * delta, device=values.device)
-            values = values + delta * field(values, time)
+            values = values + delta * field(values, time).float()
     return values
 
 

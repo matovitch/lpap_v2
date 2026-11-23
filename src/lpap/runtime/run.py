@@ -110,8 +110,9 @@ def run(
 
     reason = "target"
     gallery = getattr(task, "gallery", None)
+    # Per-metric counts: tasks may report a metric only on some steps.
     window: dict[str, torch.Tensor | float] = {}
-    window_steps = 0
+    counts: dict[str, int] = {}
     train_metrics: dict[str, float] = {}
     validation: dict[str, float] = {}
     best_dirty = False
@@ -125,10 +126,10 @@ def run(
             step += 1
             for name, value in metrics.items():
                 window[name] = window.get(name, 0.0) + (value.detach() if torch.is_tensor(value) else value)
-            window_steps += 1
+                counts[name] = counts.get(name, 0) + 1
             if step % run_config.log_every == 0:
-                train_metrics = {name: float(value) / window_steps for name, value in window.items()}
-                window, window_steps = {}, 0
+                train_metrics = {name: float(value) / counts[name] for name, value in window.items()}
+                window, counts = {}, {}
                 if not all(math.isfinite(value) for value in train_metrics.values()):
                     raise FloatingPointError(f"non-finite training metrics at step {step}: {train_metrics}")
                 log.write(step, "train", train_metrics)

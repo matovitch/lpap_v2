@@ -154,8 +154,9 @@ def _(mo):
     mo.md("""
     ## 1. Flow
 
-    Bidirectional field on images and signed log-normal prior draws. Best
-    checkpoint = lowest validation flow-matching loss.
+    Bidirectional field on images and signed log-normal prior draws, with OT
+    coupling and a 4-step round-trip loss. Best checkpoint = lowest validation
+    `objective` (`fm_euler + w · round_trip_l2_4`).
     """)
     return
 
@@ -185,9 +186,9 @@ def flow_sweep_config(mo):
     # Experiments: each variant trains its own run ``flow-sweep-<name>`` (stage 1 keeps ``flow``).
     flow_sweep_steps = 5000
     flow_sweep = {
-        "ot": ({}, {"ot_coupling": True}),
-        "rt1": ({}, {"round_trip_weight": 1.0}),
-        "ot_rt1": ({}, {"ot_coupling": True, "round_trip_weight": 1.0}),
+        "rtbf16": ({}, {"round_trip_bf16": True}),
+        "rtbf16_e2": ({}, {"round_trip_bf16": True, "round_trip_every": 2}),
+        "rtbf16_e4": ({}, {"round_trip_bf16": True, "round_trip_every": 4}),
     }
     flow_sweep_button = mo.ui.run_button(label="Run flow sweep")
     mo.vstack(
