@@ -292,6 +292,27 @@ L_flow = mean ‖v_θ(x_t, t) − v*‖²
 
 Trains: the single bidirectional field.
 
+What the loss can and cannot show (measured on the v3 bridge, see
+`stages/flow.py` validation):
+
+- **Irreducible floor.** The coupling is independent, so near the image end
+  (`α → 0`) the target `e − I` is unpredictable: loss ≥ `Var(e) = 0.04·e² ≈
+  0.30`. Near the prior end the floor is about the pixel variance (≈ 0.06).
+- **Sign ambiguity at `t → 0`.** The target flips sign between `t = 0⁻` and
+  `0⁺`; with time embedding frequencies ≤ 1 the field cannot separate
+  `|t| ≲ 10⁻³` early in training, and `Beta(0.1, 0.1)` puts about a third of
+  the samples there. Integrators never query `|t| < 1/(2·steps)`.
+- **Velocity error vs round trip.** Lower flow-matching error does not give
+  better few-step round trips: as the field converges its paths get more
+  curved and Euler round trips degrade (4 steps loses the image mean first).
+  Knobs `flow.time_scale` and `time_concentration` lower the velocity error
+  but worsen round trips, so they keep the v3 values (1.0, 0.1).
+
+Validation therefore reports, on fixed images, draws and times: the Beta-weighted
+loss, `fm_euler` (loss at the Euler midpoints the integrators use), per-band
+losses at fixed `α`, round-trip L2 at 4 and 16 steps, energy and sample
+statistics, plus a gallery (images, energies, round trips, samples).
+
 ### 4.2 Surrogate CE (teacher stage and AE)
 
 ```
@@ -366,7 +387,7 @@ end-to-end pipeline runner.
 
 | # | Stage | Data | Trains | Frozen / absent | Loss | Budget (start) |
 | - | --- | --- | --- | --- | --- | --- |
-| 1 | Flow | images + prior draws | flow field | — | §4.1 | 10k steps, batch 32, lr 1e-4 |
+| 1 | Flow | images + prior draws | flow field (EMA exported) | — | §4.1 | 20k steps, batch 256, lr 3e-4 (warmup + cosine), EMA 0.999 |
 | 2 | Energy bank | images | — (no params) | flow | — | 16-step i2e encode of every image |
 | 3 | Surrogates (per lossy pair) | bank rows | surrogate | — | §4.2 | v3 budgets (~960k samples per pair) |
 | 4 | Decoders (per lossy pair) | bank rows, exact codes | decoder | — (no surrogate) | §4.3 | v3 budgets |
@@ -392,8 +413,12 @@ Notes:
   - per-pair image L2;
   - surrogate accuracy and `|a*|`-weighted accuracy;
   - decoder probe accuracy and `|a*|`-weighted accuracy.
-- More metrics (compressibility fraction, gradient norms, energy stats,
-  galleries) are added only when a question needs them.
+- More metrics (compressibility fraction, gradient norms, energy stats) are
+  added only when a question needs them.
+- Galleries: a stage may write `gallery.png` after each validation; it is
+  shown live in the notebook and uploaded with the checkpoint, so humans and
+  agents review the same image (`scripts/review.py` pulls runs from the hub).
+- Train metrics are averaged over each log window.
 
 ## 7. Execution platform (pixi + molab, notebook-first)
 
@@ -413,7 +438,7 @@ Notes:
   by one strict generic loader into frozen dataclasses (unknown or missing
   key = error). The notebook may override fields. The resolved config is
   stored in every checkpoint.
-- **Artifacts:** a private Hugging Face model repo. Checkpoint and log are
+- **Artifacts:** a public Hugging Face model repo (`configs/storage.toml`). Checkpoint and log are
   uploaded together in one atomic commit. History is squashed when it grows.
   `last` = weights + optimizer + RNG + step; `best` = weights only.
 - **Logs:** SQLite per run (v3 format idea), uploaded with the checkpoint.
@@ -453,8 +478,9 @@ Rules:
   is `g_p̂`; `w` receives gradient through `u`.
 - jaxtyping shape annotations on tensor APIs.
 - Ruff lint + format; pytest.
-- Precision: bf16 autocast for the transformers; flow integration and LPAP
-  in fp32.
+- Precision: bf16 autocast for the transformers and the flow training
+  forward (`torch.compile`d, ~3× throughput); flow integration, flow
+  validation and LPAP in fp32.
 - No backward compatibility: artifacts are regenerated when a schema changes.
 
 ## 9. Carry-over from v3 and parking lot

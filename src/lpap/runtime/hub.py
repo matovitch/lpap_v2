@@ -64,5 +64,5 @@ class ArtifactStore:
 
     def _ensure_repo(self) -> None:
         if not self._repo_ready:
-            self.api.create_repo(self.repo_id, private=True, exist_ok=True)
+            self.api.create_repo(self.repo_id, exist_ok=True)
             self._repo_ready = True

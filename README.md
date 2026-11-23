@@ -23,6 +23,7 @@ module contracts, gradient routing, losses and training stages.
 | `src/lpap/configs/` | packaged TOML configs |
 | `notebooks/molab.py` | the single marimo notebook |
 | `scripts/molab/` | pairing helpers: `exec.sh`, `press.sh`, `status.sh`, `inject-secrets.sh` |
+| `scripts/review.py` | pull run logs and galleries from the HF repo, compare runs |
 
 ## Usage
 
@@ -49,5 +50,6 @@ are no background processes (see FOUNDATION §7).
    kernel exec would queue behind the cell, and abandoning it interrupts it.
 
 Run artifacts live under `<root>/runs/<run>/{last.pt,best.pt,log.sqlite}`
-(root `/marimo/lpap` on molab) and in the private HF model repo, one commit
-per upload.
+(root `/marimo/lpap` on molab) and in the public HF model repo, one commit
+per upload, with `gallery.png` when the stage writes one. Review locally with
+`pixi run python scripts/review.py <run-prefix> [metric ...]`.
