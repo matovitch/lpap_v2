@@ -5,13 +5,27 @@
 # and re-runs every dependent cell. Named cells missing from the notebook are
 # created in place; removals and new unnamed cells are done by hand. Edited and
 # created cells are re-run (run cells stay gated by their buttons).
+#
+# --hot [cell ...]: reinstall lpap and purge its modules inside the kernel
+# without re-running the install cell, so in-memory state (image_set,
+# energy_bank) survives. Re-runs edited cells plus the named cells, which then
+# import the new code. Objects built before keep their old classes. Naming a
+# cell upstream of the bank (e.g. session) still drops the bank.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib.sh"
 molab_require_env
 molab_guard_busy
 reinstall=0
-[[ "${1:-}" == "--reinstall" ]] && reinstall=1
+hot=0
+extra=()
+case "${1:-}" in
+  --reinstall) reinstall=1 ;;
+  --hot) hot=1; shift; extra=("$@") ;;
+  "") ;;
+  *) echo "usage: sync.sh [--reinstall | --hot [cell ...]]" >&2; exit 2 ;;
+esac
+extra_json="$(printf '%s\n' "${extra[@]}" | python3 -c 'import json,sys; print(json.dumps([l for l in sys.stdin.read().split() if l]))')"
 cells="$(cd "$here/../.." && pixi run -q python - <<'PY'
 import base64, importlib.util, json
 spec = importlib.util.spec_from_file_location("nb", "notebooks/molab.py")
@@ -55,6 +69,23 @@ if ${reinstall}:
     os.environ['LPAP_FORCE_REINSTALL'] = '1'
     async with cm.get_context() as ctx:
         ctx.run_cell(next(c.id for c in ctx.cells if c.name == 'install'))
+if ${hot}:
+    import subprocess, sys
+    subprocess.run(
+        [sys.executable, '-m', 'pip', 'install', '-q', '--force-reinstall', '--no-deps',
+         'git+https://github.com/matovitch/lpap_v2@main'],
+        check=True,
+    )
+    for _module in [n for n in sys.modules if n == 'lpap' or n.startswith('lpap.')]:
+        del sys.modules[_module]
+    async with cm.get_context() as ctx:
+        _by_name = {c.name: c.id for c in ctx.cells}
+    for _name in json.loads('${extra_json}'):
+        if _name not in _by_name:
+            raise RuntimeError(f'no cell named {_name}')
+        if _by_name[_name] not in _run:
+            _run.append(_by_name[_name])
+    print('hot reinstall done; re-running', len(_run), 'cells')
 if _run:
     async with cm.get_context() as ctx:
         for _id in _run:

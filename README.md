@@ -22,7 +22,7 @@ module contracts, gradient routing, losses and training stages.
 | `src/lpap/stages/` | one module per training stage (flow so far) |
 | `src/lpap/configs/` | packaged TOML configs |
 | `notebooks/molab.py` | the single marimo notebook |
-| `scripts/molab/` | pairing helpers: `exec.sh`, `press.sh`, `status.sh`, `inject-secrets.sh`, `sync.sh` (push `notebooks/molab.py` cell edits, `--reinstall` lpap) |
+| `scripts/molab/` | pairing helpers: `exec.sh`, `press.sh`, `status.sh`, `inject-secrets.sh`, `sync.sh` (push `notebooks/molab.py` cell edits; `--reinstall` lpap via the install cell; `--hot [cell ...]` reinstall in-kernel, keeping the in-memory bank) |
 | `scripts/review.py` | pull run logs and galleries from the HF repo, compare runs |
 
 ## Usage
