@@ -8,4 +8,5 @@ molab_require_env
 status="$(molab_read_file "$LPAP_REMOTE_ROOT/status.json")" || { echo "no status yet" >&2; exit 1; }
 if [[ "${1:-}" == "--json" ]]; then echo "$status"; exit 0; fi
 jq -r '"\(.run) state=\(.state) step=\(.step)/\(.target) heartbeat_age=\((now - .heartbeat) | floor)s",
+       (.gpu // {} | select(length > 0) | "  gpu \(."utilization.gpu")% \(."power.draw")/\(."power.limit") W mem \(."memory.used")/\(."memory.total") MiB"),
        (.metrics | to_entries[] | "  \(.key)=\(.value)")' <<<"$status"

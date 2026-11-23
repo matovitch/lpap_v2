@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import subprocess
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -175,6 +176,25 @@ def _upload(store: ArtifactStore, run: str, step: int, best_dirty: bool) -> None
     store.push(run, files, f"{run}: step {step}")
 
 
+GPU_QUERY = "utilization.gpu,power.draw,power.limit,memory.used,memory.total"
+GPU_EVERY_SECONDS = 10.0
+
+
+def gpu_stats() -> dict[str, float]:
+    """First GPU's ``nvidia-smi`` readings (utilization %, watts, MiB); empty when unavailable."""
+    try:
+        line = subprocess.run(
+            ["nvidia-smi", f"--query-gpu={GPU_QUERY}", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        ).stdout.splitlines()[0]
+        return {key: float(value) for key, value in zip(GPU_QUERY.split(","), line.split(","), strict=True)}
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        return {}
+
+
 class _Status:
     """Heartbeat file, readable through the molab file API without the kernel."""
 
@@ -183,10 +203,16 @@ class _Status:
         self.run = run
         self.target = target
         self.started = time.time()
+        self.gpu: dict[str, float] = {}
+        self.gpu_sampled = -math.inf
 
     def write(self, state: str, step: int, metrics: Mapping[str, float]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Throttled: nvidia-smi takes tens of milliseconds.
+        if time.monotonic() - self.gpu_sampled > GPU_EVERY_SECONDS:
+            self.gpu, self.gpu_sampled = gpu_stats(), time.monotonic()
         payload = {
+            "gpu": self.gpu,
             "state": state,
             "run": self.run,
             "step": step,
