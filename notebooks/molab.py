@@ -273,7 +273,8 @@ def surrogate_config(geometries, load, mo, to_dict):
     from lpap.stages import surrogate as surrogate_stage
 
     surrogate_pairs = [_name for _name, _geometry in geometries.items() if not _geometry.is_lossless]
-    surrogate_cfg = load(surrogate_stage.SurrogateStageConfig, "surrogate", {})
+    surrogate_overrides = {}
+    surrogate_cfg = load(surrogate_stage.SurrogateStageConfig, "surrogate", surrogate_overrides)
     surrogate_button = mo.ui.run_button(label="Train surrogates")
     mo.vstack(
         [
