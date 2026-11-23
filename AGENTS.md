@@ -11,6 +11,8 @@
   start a run like a human click (never `set_ui_value` for long work),
   `status.sh` to monitor. Never exec into the kernel while a run cell trains
   (`exec.sh` refuses based on `status.json`). Prefer Pushover over polling.
+- After editing `notebooks/molab.py` or `src/`, run `scripts/molab/sync.sh
+  [--reinstall]`: it edits and re-runs changed cells positionally.
 - Secrets reach molab only through `inject-secrets.sh` (kernel env, no files).
 - Every §3 behaviour (gradient routing) has a test in `tests/test_codec.py`.
   A change to `codec.py` must keep these tests passing or update them together
