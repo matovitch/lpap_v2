@@ -308,10 +308,12 @@ What the loss can and cannot show (measured on the v3 bridge, see
   Knobs `flow.time_scale` and `time_concentration` lower the velocity error
   but worsen round trips, so they keep the v3 values (1.0, 0.1).
 - **Round-trip loss.** Stage 1 therefore adds `‖render₄(encode₄(I)) − I‖²`
-  (weight 1, 32 images per batch, fp32, backprop through the 8 field calls)
-  and pairs images with prior draws by minibatch OT. At 5k steps this takes
-  4-step round-trip L2 from 0.165 to 0.0006 and 16-step from 0.016 to 0.0065,
-  for about +10 % `fm_euler` and 2.5× step time.
+  (weight 1, 32 images per batch, backprop through the 8 field calls). At 5k
+  steps this takes 4-step round-trip L2 from 0.165 to 0.0006 and 16-step from
+  0.016 to 0.0065, for about +10 % `fm_euler`. The term is compute-bound (cost
+  ∝ its batch), so it runs in bf16 every 4th step with weight ×4: same metrics,
+  16 vs 7 it/s. Minibatch OT coupling was tried and dropped: no gain on top of
+  the round-trip loss, and a CPU assignment per step.
 - **Untrained step counts drift.** Over the 20k-step run 4-step round trips
   stay at ≈ 4.5·10⁻⁴ while 16-step ones rise from 0.0024 (step 1k) to 0.013
   as the field converges. Every consumer therefore integrates with the trained
@@ -319,10 +321,17 @@ What the loss can and cannot show (measured on the v3 bridge, see
   alone are lowest for barely trained fields, so the best checkpoint is the
   lowest `objective = fm_euler + round_trip_weight · round_trip_l2_4`.
 
+Stage 1 is an init, not an end: what it must deliver is 4-step energies
+whose amplitudes are concentrated and centred like the prior, with faithful
+renders. How concentrated is set by the prior (`σ`), not by training longer;
+the AE should still start with structure to untangle.
+
 Validation therefore reports, on fixed images, draws and times: the Beta-weighted
 loss, `fm_euler` (loss at the Euler midpoints the integrators use), per-band
-losses at fixed `α`, round-trip L2 at 4 and 16 steps, energy and sample
-statistics, plus a gallery (images, energies, round trips, samples).
+losses at fixed `α`, round-trip L2 at 4 and 16 steps, `objective`, the goal
+statistics of 4-step energies next to prior draws (`*_mean`, `*_std`,
+`*_top10` = share of squared mass in the largest 10 % of coefficients) and
+sample statistics, plus a gallery (images, energies, round trips, samples).
 
 ### 4.2 Surrogate CE (teacher stage and AE)
 
@@ -398,7 +407,7 @@ end-to-end pipeline runner.
 
 | # | Stage | Data | Trains | Frozen / absent | Loss | Budget (start) |
 | - | --- | --- | --- | --- | --- | --- |
-| 1 | Flow | images + prior draws | flow field (EMA exported) | — | §4.1 | 20k steps, batch 256, lr 3e-4 (warmup + cosine), EMA 0.999, OT coupling, round-trip loss (w 1, 4 steps); best = lowest `objective` (§4.1) |
+| 1 | Flow | images + prior draws | flow field (EMA exported) | — | §4.1 | 20k steps, batch 256, lr 3e-4 (warmup + cosine), EMA 0.999, round-trip loss (w 1, 4 steps, bf16, every 4th step); best = lowest `objective` (§4.1) |
 | 2 | Energy bank | images | — (no params) | flow | — | 4-step i2e encode of every image |
 | 3 | Surrogates (per lossy pair) | bank rows | surrogate | — | §4.2 | v3 budgets (~960k samples per pair) |
 | 4 | Decoders (per lossy pair) | bank rows, exact codes | decoder | — (no surrogate) | §4.3 | v3 budgets |

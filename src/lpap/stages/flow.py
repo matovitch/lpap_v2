@@ -13,7 +13,7 @@ import torch
 from lpap.data import ImageSet
 from lpap.flow import FlowField, encode, render, sample_prior
 from lpap.gallery import energy_tiles, grid, image_tiles, write_png
-from lpap.losses import flow_matching, ot_coupling, round_trip_l2, sample_bridge_time
+from lpap.losses import flow_matching, round_trip_l2, sample_bridge_time
 from lpap.runtime import checkpoint
 from lpap.runtime.config import ModelConfig, to_dict
 from lpap.runtime.hub import ArtifactStore
@@ -35,7 +35,6 @@ class FlowStageConfig:
     bf16: bool
     time_eps: float
     time_concentration: float
-    ot_coupling: bool
     round_trip_weight: float
     round_trip_batch: int
     round_trip_train_steps: int
@@ -59,6 +58,13 @@ def learning_rate(config: FlowStageConfig, step: int) -> float:
     progress = min((step - config.warmup_steps) / span, 1.0)
     ratio = config.min_lr_ratio + (1.0 - config.min_lr_ratio) * 0.5 * (1.0 + math.cos(math.pi * progress))
     return config.learning_rate * ratio
+
+
+def top_share(values: torch.Tensor, fraction: float) -> torch.Tensor:
+    """Mean share of each row's squared mass held by its largest ``fraction`` of coefficients."""
+    square = values.flatten(1).float().square()
+    count = max(1, round(fraction * square.shape[1]))
+    return (square.topk(count, dim=1).values.sum(1) / square.sum(1).clamp_min(1e-12)).mean()
 
 
 class FlowTask:
@@ -108,8 +114,6 @@ class FlowTask:
         image = self.images.sample_train(self.config.batch_size, self.generator)
         config = self.config
         prior = self._prior(image.shape[0], self.generator)
-        if config.ot_coupling:
-            prior = ot_coupling(image, prior)
         time = self._time(image.shape[0], self.generator)
         with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=config.bf16):
             loss = flow_matching(self.train_field, image, prior, time)
@@ -164,9 +168,12 @@ class FlowTask:
                 metrics[f"round_trip_l2_{steps}"] = round_trip_l2(field, image, steps)
             trained = metrics[f"round_trip_l2_{config.round_trip_train_steps}"]
             metrics["objective"] = metrics["fm_euler"] + config.round_trip_weight * trained
-            energy = encode(field, image, max(config.round_trip_steps))
-            metrics["energy_std"] = energy.std()
-            metrics["energy_abs_mean"] = energy.abs().mean()
+            # Goal of stage 1: energies as concentrated and centred as the prior (side by side).
+            energy = encode(field, image, config.round_trip_train_steps)
+            for name, values in (("energy", energy), ("prior", prior.squeeze(1))):
+                metrics[f"{name}_mean"] = values.mean()
+                metrics[f"{name}_std"] = values.std()
+                metrics[f"{name}_top10"] = top_share(values, 0.1)
             sample = render(field, prior.squeeze(1), max(config.round_trip_steps))
             metrics["sample_mean"] = sample.mean()
             metrics["sample_std"] = sample.std()

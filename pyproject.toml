@@ -11,7 +11,6 @@ dependencies = [
   "jaxtyping>=0.3",
   "huggingface_hub>=0.34",
   "zstandard>=0.23",
-  "scipy>=1.11",
 ]
 
 [tool.setuptools.packages.find]

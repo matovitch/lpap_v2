@@ -154,8 +154,8 @@ def _(mo):
     mo.md("""
     ## 1. Flow
 
-    Bidirectional field on images and signed log-normal prior draws, with OT
-    coupling and a 4-step round-trip loss. Best checkpoint = lowest validation
+    Bidirectional field on images and signed log-normal prior draws, plus a
+    4-step round-trip loss. Best checkpoint = lowest validation
     `objective` (`fm_euler + w · round_trip_l2_4`).
     """)
     return
