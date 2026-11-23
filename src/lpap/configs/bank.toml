@@ -1,0 +1,5 @@
+# Stage 2: energy bank (FOUNDATION §5). Memory only: recomputed from flow best each session.
+steps = 4              # Euler steps of the i2e encode; must equal flow round_trip_train_steps
+batch_size = 4096
+compile = true
+check_count = 4096     # validation rows rendered back to report round-trip L2

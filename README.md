@@ -50,6 +50,6 @@ are no background processes (see FOUNDATION §7).
    kernel exec would queue behind the cell, and abandoning it interrupts it.
 
 Run artifacts live under `<root>/runs/<run>/{last.pt,best.pt,log.sqlite}`
-(root `/marimo/lpap` on molab) and in the public HF model repo, one commit
+(root `/tmp/lpap` on molab: the workspace persists only small source files) and in the public HF model repo, one commit
 per upload, with `gallery.png` when the stage writes one. Review locally with
 `pixi run python scripts/review.py <run-prefix> [metric ...]`.

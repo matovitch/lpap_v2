@@ -59,7 +59,8 @@ def session(os):
     from lpap.runtime.hub import ArtifactStore
     from lpap.runtime.notify import enabled as notify_enabled
 
-    root = Path(os.environ.get("LPAP_ROOT", "/marimo/lpap" if Path("/marimo").is_dir() else "lpap_root"))
+    # molab persists only small source files in /marimo: data and runs live in /tmp, HF keeps the runs.
+    root = Path(os.environ.get("LPAP_ROOT", "/tmp/lpap" if Path("/marimo").is_dir() else "lpap_root"))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_config = load_model()
     storage = load_storage()
@@ -232,11 +233,44 @@ def flow_sweep_run(
 
 
 @app.cell
+def bank_config(load, mo):
+    from lpap.stages import bank as bank_stage
+
+    bank_cfg = load(bank_stage.BankStageConfig, "bank", {})
+    bank_button = mo.ui.run_button(label="Build energy bank")
+    mo.vstack(
+        [
+            mo.md("""
+    ## 2. Energy bank
+
+    4-step i2e encode of every image with `flow/best.pt`, kept in GPU memory as
+    float16 and never written to disk (recomputed each session).
+    """),
+            bank_cfg,
+            bank_button,
+        ]
+    )
+    return bank_button, bank_cfg, bank_stage
+
+
+@app.cell
+def bank(bank_button, bank_cfg, bank_stage, image_set, mo, model_config, store):
+    mo.stop(not bank_button.value, mo.md("_Press **Build energy bank** (a few minutes)._"))
+    with mo.status.progress_bar(total=image_set.images.shape[0], title="Encoding images") as _bar:
+        _done = [0]
+
+        def _progress(done, total):
+            _bar.update(increment=done - _done[0])
+            _done[0] = done
+
+        energy_bank, bank_stats = bank_stage.build(model_config, bank_cfg, image_set, store, _progress)
+    bank_stats
+    return (energy_bank,)
+
+
+@app.cell
 def _(mo):
     mo.md("""
-    ## 2. Energy bank
-    _Not implemented yet._
-
     ## 3. Surrogates
     _Not implemented yet._
 

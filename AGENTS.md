@@ -13,6 +13,8 @@
   (`exec.sh` refuses based on `status.json`). Prefer Pushover over polling.
 - After editing `notebooks/molab.py` or `src/`, run `scripts/molab/sync.sh
   [--reinstall]`: it edits and re-runs changed cells positionally.
+- Keep big files out of the molab workspace (`/marimo`): run root and data in
+  `/tmp/lpap`, persistence on HF, derived data in memory.
 - Secrets reach molab only through `inject-secrets.sh` (kernel env, no files).
 - Every §3 behaviour (gradient routing) has a test in `tests/test_codec.py`.
   A change to `codec.py` must keep these tests passing or update them together

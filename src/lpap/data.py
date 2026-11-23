@@ -113,3 +113,27 @@ class ImageSet:
         """The first ``batch_size · batch_count`` validation images, always the same."""
         head = self.validation[: batch_size * batch_count]
         return [self.batch(chunk) for chunk in head.split(batch_size)]
+
+
+class EnergyBank:
+    """Stage-2 energies in image order (rows split like ``ImageSet``), resident on ``device`` as float16."""
+
+    def __init__(self, energies: Float[torch.Tensor, "count n"], device: torch.device | str) -> None:
+        self.energies = energies.to(device=device, dtype=torch.float16)
+        self.device = self.energies.device
+        train, validation = split_indices(energies.shape[0])
+        self.train = train.to(self.device)
+        self.validation = validation.to(self.device)
+
+    def batch(self, indices: Int[torch.Tensor, batch]) -> Float[torch.Tensor, "batch n"]:
+        return self.energies[indices.to(self.device)].float()
+
+    def sample_train(self, batch_size: int, generator: torch.Generator) -> Float[torch.Tensor, "batch n"]:
+        """``generator`` lives on CPU so its state is device independent."""
+        picks = torch.randint(0, self.train.numel(), (batch_size,), generator=generator)
+        return self.batch(self.train[picks.to(self.device)])
+
+    def validation_batches(self, batch_size: int, batch_count: int) -> list[Float[torch.Tensor, "batch n"]]:
+        """The first ``batch_size · batch_count`` validation rows, always the same."""
+        head = self.validation[: batch_size * batch_count]
+        return [self.batch(chunk) for chunk in head.split(batch_size)]

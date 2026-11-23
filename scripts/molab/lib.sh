@@ -3,10 +3,10 @@
 # Env: MOLAB_URL, MOLAB_TOKEN (or MARIMO_TOKEN)
 #      MARIMO_PAIR_SCRIPTS  marimo-pair scripts dir (default ~/.cursor/skills/marimo-pair/scripts;
 #                           install with: npx skills add marimo-team/marimo-pair)
-#      LPAP_REMOTE_ROOT     run root on the molab box (default /marimo/lpap)
+#      LPAP_REMOTE_ROOT     run root on the molab box (default /tmp/lpap)
 
 MOLAB_TOKEN="${MOLAB_TOKEN:-${MARIMO_TOKEN:-}}"
-LPAP_REMOTE_ROOT="${LPAP_REMOTE_ROOT:-/marimo/lpap}"
+LPAP_REMOTE_ROOT="${LPAP_REMOTE_ROOT:-/tmp/lpap}"
 
 molab_require_env() {
   [[ -n "${MOLAB_URL:-}" ]] || { echo "set MOLAB_URL to the paired notebook URL" >&2; return 1; }
