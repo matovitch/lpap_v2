@@ -13,7 +13,7 @@ import torch
 from lpap.data import ImageSet
 from lpap.flow import FlowField, encode, render, sample_prior
 from lpap.gallery import energy_tiles, grid, image_tiles, write_png
-from lpap.losses import flow_matching, sample_bridge_time
+from lpap.losses import flow_matching, ot_coupling, round_trip_l2, sample_bridge_time
 from lpap.runtime import checkpoint
 from lpap.runtime.config import ModelConfig, to_dict
 from lpap.runtime.hub import ArtifactStore
@@ -35,6 +35,10 @@ class FlowStageConfig:
     bf16: bool
     time_eps: float
     time_concentration: float
+    ot_coupling: bool
+    round_trip_weight: float
+    round_trip_batch: int
+    round_trip_train_steps: int
     validation_seed: int
     validation_batch_size: int
     validation_batch_count: int
@@ -100,10 +104,20 @@ class FlowTask:
         for group in self.optimizer.param_groups:
             group["lr"] = rate
         image = self.images.sample_train(self.config.batch_size, self.generator)
+        config = self.config
         prior = self._prior(image.shape[0], self.generator)
+        if config.ot_coupling:
+            prior = ot_coupling(image, prior)
         time = self._time(image.shape[0], self.generator)
-        with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.config.bf16):
+        with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=config.bf16):
             loss = flow_matching(self.train_field, image, prior, time)
+        metrics = {"flow_matching": loss.detach()}
+        if config.round_trip_weight > 0:
+            round_trip = round_trip_l2(
+                self.train_field, image[: config.round_trip_batch], config.round_trip_train_steps
+            )
+            loss = loss + config.round_trip_weight * round_trip
+            metrics["round_trip_l2"] = round_trip.detach()
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(self.field.parameters(), self.config.max_grad_norm)
@@ -111,7 +125,7 @@ class FlowTask:
         self.step += 1
         decay = min(self.config.ema_decay, (1.0 + self.step) / (10.0 + self.step))
         torch._foreach_lerp_(list(self.ema.parameters()), list(self.field.parameters()), 1.0 - decay)
-        return {"flow_matching": loss.detach(), "grad_norm": grad_norm, "lr": rate}
+        return {**metrics, "grad_norm": grad_norm, "lr": rate}
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
@@ -140,8 +154,8 @@ class FlowTask:
                 metrics[f"fm_i2e_a{alpha:g}"] = flow_matching(field, image, prior, (alpha - 1.0) * ones)
                 metrics[f"fm_e2i_a{alpha:g}"] = flow_matching(field, image, prior, (1.0 - alpha) * ones)
             for steps in config.round_trip_steps:
-                energy = encode(field, image, steps)
-                metrics[f"round_trip_l2_{steps}"] = (render(field, energy, steps) - image).square().mean()
+                metrics[f"round_trip_l2_{steps}"] = round_trip_l2(field, image, steps)
+            energy = encode(field, image, max(config.round_trip_steps))
             metrics["energy_std"] = energy.std()
             metrics["energy_abs_mean"] = energy.abs().mean()
             sample = render(field, prior.squeeze(1), max(config.round_trip_steps))

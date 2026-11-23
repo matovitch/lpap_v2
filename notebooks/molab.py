@@ -185,11 +185,9 @@ def flow_sweep_config(mo):
     # Experiments: each variant trains its own run ``flow-sweep-<name>`` (stage 1 keeps ``flow``).
     flow_sweep_steps = 5000
     flow_sweep = {
-        "base": ({}, {}),
-        "base_fp32": ({}, {"bf16": False}),
-        "ts1000": ({"flow.time_scale": 1000.0}, {}),
-        "c1": ({}, {"time_concentration": 1.0}),
-        "ts1000_c1": ({"flow.time_scale": 1000.0}, {"time_concentration": 1.0}),
+        "ot": ({}, {"ot_coupling": True}),
+        "rt1": ({}, {"round_trip_weight": 1.0}),
+        "ot_rt1": ({}, {"ot_coupling": True, "round_trip_weight": 1.0}),
     }
     flow_sweep_button = mo.ui.run_button(label="Run flow sweep")
     mo.vstack(

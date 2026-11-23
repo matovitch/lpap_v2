@@ -1,7 +1,7 @@
 import torch
 from torch.nn import functional as F
 
-from lpap.losses import accuracies, flow_matching, sample_bridge_time, signed_mass, weighted_ce
+from lpap.losses import accuracies, flow_matching, ot_coupling, sample_bridge_time, signed_mass, weighted_ce
 
 
 def test_weighted_ce_matches_manual():
@@ -45,3 +45,11 @@ def test_flow_matching_is_zero_for_the_oracle_field():
         return torch.where((t <= 0)[:, None, None], prior - image, image - prior)
 
     assert float(flow_matching(oracle, image, prior, time)) == 0.0
+
+
+def test_ot_coupling_permutes_prior_to_lower_cost():
+    generator = torch.Generator().manual_seed(0)
+    image, prior = torch.randn(16, 1, 8, generator=generator), torch.randn(16, 1, 8, generator=generator)
+    paired = ot_coupling(image, prior)
+    assert sorted(paired.flatten().tolist()) == sorted(prior.flatten().tolist())
+    assert (paired - image).square().sum() <= (prior - image).square().sum()

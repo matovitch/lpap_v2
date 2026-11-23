@@ -78,3 +78,21 @@ def flow_matching(
     state = (1.0 - alpha) * image + alpha * prior
     target = torch.where(left, prior - image, image - prior)
     return (field(state, time) - target).float().square().mean()
+
+
+def ot_coupling(
+    image: Float[torch.Tensor, "batch 1 n"], prior: Float[torch.Tensor, "batch 1 n"]
+) -> Float[torch.Tensor, "batch 1 n"]:
+    """Minibatch OT pairing: ``prior`` permuted to minimise total squared L2 to ``image`` (marginal unchanged)."""
+    from scipy.optimize import linear_sum_assignment
+
+    cost = torch.cdist(image.flatten(1).float(), prior.flatten(1).float()).square()
+    _, columns = linear_sum_assignment(cost.cpu().numpy())
+    return prior[torch.as_tensor(columns, device=prior.device)]
+
+
+def round_trip_l2(field: nn.Module, image: Float[torch.Tensor, "batch 1 n"], steps: int) -> torch.Tensor:
+    """``‖render(encode(I)) − I‖²`` with ``steps`` Euler steps each way (fp32, differentiable)."""
+    from lpap.flow import encode, render
+
+    return (render(field, encode(field, image, steps), steps) - image).square().mean()

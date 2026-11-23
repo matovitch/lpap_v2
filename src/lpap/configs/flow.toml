@@ -10,6 +10,10 @@ compile = true         # torch.compile train and EMA fields
 bf16 = true            # autocast for the training forward only; validation and integration stay fp32
 time_eps = 1e-4
 time_concentration = 0.1    # u ~ Beta(c, c) per half
+ot_coupling = false         # pair images with prior draws by minibatch OT (scipy assignment)
+round_trip_weight = 0.0     # > 0 adds w · ‖render(encode(I)) − I‖² (fp32, backprop through 2k field calls)
+round_trip_batch = 32       # images of the batch used by the round-trip term
+round_trip_train_steps = 4
 # Validation: fixed images, prior draws and times.
 validation_seed = 30123
 validation_batch_size = 256
