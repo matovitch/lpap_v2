@@ -51,11 +51,16 @@ def signed_mass(energy: Float[torch.Tensor, "batch n"], tau: float) -> torch.Ten
 
 
 def sample_bridge_time(
-    batch: int, *, eps: float = 1e-4, generator: torch.Generator | None = None, device: torch.device | str = "cpu"
+    batch: int,
+    *,
+    eps: float = 1e-4,
+    concentration: float = 0.1,
+    generator: torch.Generator | None = None,
+    device: torch.device | str = "cpu",
 ) -> Float[torch.Tensor, batch]:
-    """Half chosen with probability ½, local progress ``u ~ Beta(0.1, 0.1)`` in ``(ε, 1-ε)``."""
-    gamma_a = torch._standard_gamma(torch.full((batch,), 0.1), generator=generator)
-    gamma_b = torch._standard_gamma(torch.full((batch,), 0.1), generator=generator)
+    """Half chosen with probability ½, local progress ``u ~ Beta(c, c)`` in ``(ε, 1-ε)``."""
+    gamma_a = torch._standard_gamma(torch.full((batch,), concentration), generator=generator)
+    gamma_b = torch._standard_gamma(torch.full((batch,), concentration), generator=generator)
     progress = (gamma_a / (gamma_a + gamma_b)).nan_to_num(0.5).clamp(eps, 1.0 - eps)
     left = torch.rand(batch, generator=generator) < 0.5
     return torch.where(left, progress - 1.0, progress).to(device)

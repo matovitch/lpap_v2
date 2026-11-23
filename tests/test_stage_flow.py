@@ -14,7 +14,10 @@ def test_flow_stage_trains_resumes_and_exports(tmp_path):
         "batch_size": 4,
         "validation_batch_size": 4,
         "validation_batch_count": 2,
-        "euler_steps": 2,
+        "round_trip_steps": [1, 2],
+        "gallery_count": 3,
+        "gallery_sample_steps": [1, 2],
+        "warmup_steps": 2,
         "run.steps": 6,
         "run.log_every": 1,
         "run.validate_every": 3,
@@ -27,7 +30,8 @@ def test_flow_stage_trains_resumes_and_exports(tmp_path):
 
     result = train(model, config, images, store)
     assert (result.step, result.reason) == (6, "target")
-    assert set(result.last_validation) == {"flow_matching", "round_trip_l2", "energy_std", "energy_abs_mean"}
+    assert {"flow_matching", "fm_i2e_a0.5", "round_trip_l2_2"} <= set(result.last_validation)
+    assert (tmp_path / "runs" / "flow" / "gallery.png").read_bytes().startswith(b"\x89PNG")
 
     longer = load(FlowStageConfig, "flow", {**overrides, "run.steps": 9})
     assert train(model, longer, images, store).step == 9

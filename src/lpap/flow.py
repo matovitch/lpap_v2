@@ -15,22 +15,24 @@ from torch.nn import functional as F
 class FlowConfig:
     width: int
     time_dim: int
+    time_scale: float
     dilation_cycles: int
     dilations: tuple[int, ...]
     kernel_size: int
 
 
 class SinusoidalTimeEmbedding(nn.Module):
-    def __init__(self, dim: int) -> None:
+    def __init__(self, dim: int, scale: float = 1.0) -> None:
         super().__init__()
         self.dim = dim
+        self.scale = scale
 
     def forward(self, time: Float[torch.Tensor, batch]) -> Float[torch.Tensor, "batch dim"]:
         half = self.dim // 2
         frequencies = torch.exp(
             torch.arange(half, device=time.device, dtype=time.dtype) * (-math.log(10000.0) / max(half - 1, 1))
         )
-        angles = time[:, None] * frequencies[None, :]
+        angles = self.scale * time[:, None] * frequencies[None, :]
         return torch.cat((angles.sin(), angles.cos()), dim=-1)
 
 
@@ -55,7 +57,7 @@ class FlowField(nn.Module):
         if config.time_dim % 2:
             raise ValueError("time_dim must be even")
         self.time_embedding = nn.Sequential(
-            SinusoidalTimeEmbedding(config.time_dim),
+            SinusoidalTimeEmbedding(config.time_dim, config.time_scale),
             nn.Linear(config.time_dim, config.time_dim),
             nn.SiLU(),
             nn.Linear(config.time_dim, config.time_dim),

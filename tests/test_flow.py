@@ -2,7 +2,7 @@ import torch
 
 from lpap.flow import FlowConfig, FlowField, encode, integrate, render, sample_prior
 
-CONFIG = FlowConfig(width=16, time_dim=8, dilation_cycles=1, dilations=(1, 2), kernel_size=3)
+CONFIG = FlowConfig(width=16, time_dim=8, time_scale=1.0, dilation_cycles=1, dilations=(1, 2), kernel_size=3)
 
 
 def test_zero_initialised_field_integrates_to_identity():

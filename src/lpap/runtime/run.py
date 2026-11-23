@@ -26,6 +26,7 @@ LAST = "last.pt"
 BEST = "best.pt"
 LOG = "log.sqlite"
 STATUS = "status.json"
+GALLERY = "gallery.png"
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,10 @@ class RunConfig:
 
 
 class Task(Protocol):
-    """One stage's trainable state. ``train_step`` metrics may stay on device."""
+    """One stage's trainable state. ``train_step`` metrics may stay on device.
+
+    Optional: ``gallery(path)`` writes a review image after each validation.
+    """
 
     best_metric: str
 
@@ -105,6 +109,9 @@ def run(
         checkpoint.save(payload, store.local(run, BEST))
 
     reason = "target"
+    gallery = getattr(task, "gallery", None)
+    window: dict[str, torch.Tensor | float] = {}
+    window_steps = 0
     train_metrics: dict[str, float] = {}
     validation: dict[str, float] = {}
     best_dirty = False
@@ -116,8 +123,12 @@ def run(
                 break
             metrics = task.train_step()
             step += 1
+            for name, value in metrics.items():
+                window[name] = window.get(name, 0.0) + (value.detach() if torch.is_tensor(value) else value)
+            window_steps += 1
             if step % run_config.log_every == 0:
-                train_metrics = {name: float(value) for name, value in metrics.items()}
+                train_metrics = {name: float(value) / window_steps for name, value in window.items()}
+                window, window_steps = {}, 0
                 if not all(math.isfinite(value) for value in train_metrics.values()):
                     raise FloatingPointError(f"non-finite training metrics at step {step}: {train_metrics}")
                 log.write(step, "train", train_metrics)
@@ -131,8 +142,12 @@ def run(
                     best = validation[task.best_metric]
                     save_best(best)
                     best_dirty = True
+                event = {"step": step, "target": run_config.steps, "validation": validation, "best": best}
+                if gallery is not None:
+                    gallery(store.local(run, GALLERY))
+                    event["gallery"] = store.local(run, GALLERY)
                 if progress:
-                    progress({"step": step, "target": run_config.steps, "validation": validation, "best": best})
+                    progress(event)
             if step % run_config.checkpoint_every == 0:
                 save_last()
             if step % run_config.upload_every == 0:
@@ -155,7 +170,7 @@ def run(
 
 
 def _upload(store: ArtifactStore, run: str, step: int, best_dirty: bool) -> None:
-    files = [LAST, LOG] + ([BEST] if best_dirty else [])
+    files = [LAST, LOG, GALLERY] + ([BEST] if best_dirty else [])
     store.push(run, files, f"{run}: step {step}")
 
 

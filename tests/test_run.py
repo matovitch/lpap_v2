@@ -99,3 +99,10 @@ def test_non_finite_metrics_fail_without_overwriting_last(tmp_path):
         run(CountingTask(fail_at=7), run="r", config={}, run_config=config(), store=store)
     assert checkpoint.load(store.local("r", LAST))["step"] == 5
     assert json.loads((tmp_path / STATUS).read_text())["state"] == "failed"
+
+
+def test_train_metrics_are_averaged_over_the_log_window(tmp_path):
+    store = ArtifactStore(tmp_path, None)
+    run(CountingTask(), run="r", config={}, run_config=config(steps=4, log_every=2), store=store)
+    logged = [value for _, value in read_series(store.local("r", LOG), "train", "loss")]
+    assert logged == pytest.approx([(1 / 2 + 1 / 3) / 2, (1 / 4 + 1 / 5) / 2])

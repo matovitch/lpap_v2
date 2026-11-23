@@ -1,18 +1,26 @@
 # Stage 1: bidirectional flow (FOUNDATION §4.1, §5).
 seed = 789
-batch_size = 32
-learning_rate = 1e-4
+batch_size = 256
+learning_rate = 3e-4
+warmup_steps = 1000
+min_lr_ratio = 0.1
+ema_decay = 0.999
 max_grad_norm = 1.0
 time_eps = 1e-4
+time_concentration = 0.1    # u ~ Beta(c, c) per half
+# Validation: fixed images, prior draws and times.
 validation_seed = 30123
-validation_batch_size = 128
-validation_batch_count = 4
-euler_steps = 4
+validation_batch_size = 256
+validation_batch_count = 16
+round_trip_steps = [4, 16]    # AE encoder/renderer, energy bank
+band_alphas = [0.05, 0.5, 0.95, 0.999]
+gallery_count = 16
+gallery_sample_steps = [4, 16, 64]
 
 [run]
-steps = 10000
+steps = 20000
 budget_minutes = 600
-log_every = 10
-validate_every = 500
-checkpoint_every = 500
-upload_every = 2000
+log_every = 20
+validate_every = 1000
+checkpoint_every = 1000
+upload_every = 5000
