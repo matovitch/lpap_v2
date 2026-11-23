@@ -7,8 +7,6 @@ from pathlib import Path
 import torch
 from jaxtyping import Float, Int, UInt8
 
-IMAGES_BUCKET = "matovitch/lpap-images"
-IMAGES_REMOTE = "images_32x32_gray.pt.zst"
 IMAGES_LOCAL = "data/images_32x32_gray.pt"
 SPLIT_SEED = 20261123
 VALIDATION_FRACTION = 0.05
@@ -51,7 +49,7 @@ def hilbert_unflatten(sequence: Float[torch.Tensor, "batch 1 n"]) -> Float[torch
     return out.reshape(*sequence.shape[:-1], side, side)
 
 
-def ensure_images(root: str | Path = ".") -> Path:
+def ensure_images(root: str | Path, *, bucket: str, remote: str) -> Path:
     """Return the local image archive, downloading and decompressing if missing."""
     root = Path(root)
     pt_path = root / IMAGES_LOCAL
@@ -64,12 +62,13 @@ def ensure_images(root: str | Path = ".") -> Path:
     zst_path = pt_path.with_suffix(".pt.zst")
     if not zst_path.is_file():
         partial = zst_path.with_suffix(".partial")
-        HfFileSystem(token=False).get(f"hf://buckets/{IMAGES_BUCKET}/{IMAGES_REMOTE}", str(partial))
+        HfFileSystem(token=False).get(f"hf://buckets/{bucket}/{remote}", str(partial))
         partial.replace(zst_path)
     tmp = pt_path.with_suffix(".tmp")
     with zst_path.open("rb") as source, tmp.open("wb") as target:
         zstandard.ZstdDecompressor().copy_stream(source, target)
     tmp.replace(pt_path)
+    zst_path.unlink()
     return pt_path
 
 
@@ -90,3 +89,27 @@ def split_indices(count: int) -> tuple[Int[torch.Tensor, train], Int[torch.Tenso
 def to_model_input(images: UInt8[torch.Tensor, "batch 1 side side"]) -> Float[torch.Tensor, "batch 1 n"]:
     """``/255`` then Hilbert order."""
     return hilbert_flatten(images.to(torch.float32) / 255.0)
+
+
+class ImageSet:
+    """All images resident on ``device`` as uint8, with the fixed split."""
+
+    def __init__(self, images: UInt8[torch.Tensor, "count 1 side side"], device: torch.device | str) -> None:
+        self.images = images.to(device)
+        self.device = self.images.device
+        train, validation = split_indices(images.shape[0])
+        self.train = train.to(self.device)
+        self.validation = validation.to(self.device)
+
+    def batch(self, indices: Int[torch.Tensor, batch]) -> Float[torch.Tensor, "batch 1 n"]:
+        return to_model_input(self.images[indices.to(self.device)])
+
+    def sample_train(self, batch_size: int, generator: torch.Generator) -> Float[torch.Tensor, "batch 1 n"]:
+        """``generator`` lives on CPU so its state is device independent."""
+        picks = torch.randint(0, self.train.numel(), (batch_size,), generator=generator)
+        return self.batch(self.train[picks.to(self.device)])
+
+    def validation_batches(self, batch_size: int, batch_count: int) -> list[Float[torch.Tensor, "batch 1 n"]]:
+        """The first ``batch_size · batch_count`` validation images, always the same."""
+        head = self.validation[: batch_size * batch_count]
+        return [self.batch(chunk) for chunk in head.split(batch_size)]

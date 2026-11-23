@@ -1,0 +1,34 @@
+import torch
+
+from lpap.data import ImageSet
+from lpap.runtime.config import load, load_model
+from lpap.runtime.hub import ArtifactStore
+from lpap.stages.flow import FlowStageConfig, load_field, train
+
+TINY_MODEL = {"flow.width": 8, "flow.time_dim": 8, "flow.dilation_cycles": 1, "flow.dilations": [1, 2]}
+
+
+def test_flow_stage_trains_resumes_and_exports(tmp_path):
+    model = load_model(TINY_MODEL)
+    overrides = {
+        "batch_size": 4,
+        "validation_batch_size": 4,
+        "validation_batch_count": 2,
+        "euler_steps": 2,
+        "run.steps": 6,
+        "run.log_every": 1,
+        "run.validate_every": 3,
+        "run.checkpoint_every": 3,
+        "run.upload_every": 100,
+    }
+    config = load(FlowStageConfig, "flow", overrides)
+    images = ImageSet(torch.randint(0, 256, (200, 1, 32, 32), dtype=torch.uint8), "cpu")
+    store = ArtifactStore(tmp_path, None)
+
+    result = train(model, config, images, store)
+    assert (result.step, result.reason) == (6, "target")
+    assert set(result.last_validation) == {"flow_matching", "round_trip_l2", "energy_std", "energy_abs_mean"}
+
+    longer = load(FlowStageConfig, "flow", {**overrides, "run.steps": 9})
+    assert train(model, longer, images, store).step == 9
+    assert load_field(model, store, "cpu").output.weight.shape == (1, 8, 1)

@@ -45,6 +45,13 @@ class ModelConfig:
         raise KeyError(name)
 
 
+@dataclass(frozen=True)
+class StorageConfig:
+    images_bucket: str
+    images_remote: str
+    artifacts_repo: str
+
+
 class ConfigError(ValueError):
     pass
 
@@ -121,6 +128,10 @@ def load(cls: type[T], name: str, overrides: dict[str, Any] | None = None) -> T:
 
 def load_model(overrides: dict[str, Any] | None = None) -> ModelConfig:
     return load(ModelConfig, "model", overrides)
+
+
+def load_storage(overrides: dict[str, Any] | None = None) -> StorageConfig:
+    return load(StorageConfig, "storage", overrides)
 
 
 def to_dict(config: Any) -> dict[str, Any]:

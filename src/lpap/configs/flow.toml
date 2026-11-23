@@ -1,0 +1,18 @@
+# Stage 1: bidirectional flow (FOUNDATION §4.1, §5).
+seed = 789
+batch_size = 32
+learning_rate = 1e-4
+max_grad_norm = 1.0
+time_eps = 1e-4
+validation_seed = 30123
+validation_batch_size = 128
+validation_batch_count = 4
+euler_steps = 4
+
+[run]
+steps = 10000
+budget_minutes = 600
+log_every = 10
+validate_every = 500
+checkpoint_every = 500
+upload_every = 2000

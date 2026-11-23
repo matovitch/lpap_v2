@@ -18,10 +18,11 @@ module contracts, gradient routing, losses and training stages.
 | `src/lpap/surrogate.py`, `decoder.py`, `transformer.py` | per-pair models |
 | `src/lpap/codec.py` | §3 gradient routing (frontend ST, split probe ST) |
 | `src/lpap/losses.py` | §4 losses |
-| `src/lpap/runtime/` | strict config loader (checkpoint, hub, log, run loop to come) |
+| `src/lpap/runtime/` | strict config loader, checkpoints, HF artifact store, SQLite log, Pushover, foreground run loop |
+| `src/lpap/stages/` | one module per training stage (flow so far) |
 | `src/lpap/configs/` | packaged TOML configs |
 | `notebooks/molab.py` | the single marimo notebook |
-| `docs/` | extra documentation |
+| `scripts/molab/` | pairing helpers: `exec.sh`, `press.sh`, `status.sh`, `inject-secrets.sh` |
 
 ## Usage
 
@@ -34,3 +35,19 @@ pixi run notebook   # local marimo preview
 
 Remote training runs in the molab notebook only, in foreground cells. There
 are no background processes (see FOUNDATION §7).
+
+## molab
+
+1. Open `notebooks/molab.py` on molab with a GPU runtime and pair
+   (`MOLAB_URL`, `MOLAB_TOKEN`; marimo-pair skill installed on the host).
+2. `scripts/molab/inject-secrets.sh` exports `secrets.toml` (copy of
+   `secrets.toml.example`) into the kernel: `HF_TOKEN` (write access to the
+   artifacts repo of `src/lpap/configs/storage.toml`), `PUSHOVER_*`.
+3. Re-run the `session` cell, press **Load images**, then a stage's train
+   button (`scripts/molab/press.sh flow_button` from the host).
+4. While a run cell trains, monitor with `scripts/molab/status.sh` only: any
+   kernel exec would queue behind the cell, and abandoning it interrupts it.
+
+Run artifacts live under `<root>/runs/<run>/{last.pt,best.pt,log.sqlite}`
+(root `/marimo/lpap` on molab) and in the private HF model repo, one commit
+per upload.

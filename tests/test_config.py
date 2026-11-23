@@ -1,6 +1,6 @@
 import pytest
 
-from lpap.runtime.config import ConfigError, ModelConfig, from_dict, load_model, to_dict
+from lpap.runtime.config import ConfigError, ModelConfig, from_dict, load_model, load_storage, to_dict
 
 
 def test_model_config_loads():
@@ -31,3 +31,7 @@ def test_strictness():
         from_dict(ModelConfig, missing)
     with pytest.raises(ConfigError, match="expected int"):
         from_dict(ModelConfig, {**data, "image_side": "32"})
+
+
+def test_packaged_configs_load():
+    assert load_storage().artifacts_repo

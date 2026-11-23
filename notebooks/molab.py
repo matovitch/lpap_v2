@@ -13,97 +13,187 @@ def _():
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        # LPAP v2
+    mo.md("""
+    # LPAP v2
 
-        One notebook, one section per stage (FOUNDATION §5, §7). Cells only pick a
-        config, call the package and display progress. Training cells run in the
-        foreground until their step target or wall-clock budget; interrupting the
-        kernel saves and uploads, and re-running the cell resumes.
+    One notebook, one section per stage (FOUNDATION §5, §7). Cells only pick a
+    config, call the package and display progress. Training cells run in the
+    foreground until their step target or wall-clock budget; interrupting the
+    kernel saves and uploads, and re-running the cell resumes.
 
-        ## Setup
-        """
-    )
+    ## Setup
+    """)
     return
 
 
 @app.cell
-def _():
-    # On molab: install the package from a git ref. Locally pixi already provides it.
+def install():
+    # On molab: install the package from a git ref when missing (or LPAP_FORCE_REINSTALL=1).
+    # Locally pixi already provides it as an editable install.
     import importlib.util
+    import os
     import subprocess
     import sys
 
     LPAP_GIT_REF = "main"
+    _source = f"git+https://github.com/matovitch/lpap_v2@{LPAP_GIT_REF}"
     if importlib.util.find_spec("lpap") is None:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", _source], check=True)
+    elif os.environ.get("LPAP_FORCE_REINSTALL") == "1":
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-q", f"git+https://github.com/matovitch/lpap_v2@{LPAP_GIT_REF}"],
-            check=True,
+            [sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps", _source], check=True
         )
-    return
+    return (os,)
 
 
 @app.cell
-def _():
+def session(os):
+    from pathlib import Path
+
     import torch
 
     from lpap.geometry import PairGeometry
-    from lpap.runtime.config import load_model
+    from lpap.runtime.config import load, load_model, load_storage
+    from lpap.runtime.hub import ArtifactStore
+    from lpap.runtime.notify import enabled as notify_enabled
 
+    root = Path(os.environ.get("LPAP_ROOT", "/marimo/lpap" if Path("/marimo").is_dir() else "lpap_root"))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_config = load_model()
+    storage = load_storage()
+    store = ArtifactStore(root, storage.artifacts_repo if os.environ.get("HF_TOKEN") else None)
     geometries = {spec.name: PairGeometry(spec, model_config.value_count).to(device) for spec in model_config.pairs}
     environment = {
         "torch": torch.__version__,
         "device": torch.cuda.get_device_name() if device.type == "cuda" else "cpu",
+        "root": str(root),
+        "artifacts": storage.artifacts_repo if store.remote else "local only (no HF_TOKEN)",
+        "pushover": notify_enabled(),
         "pairs": list(geometries),
     }
     environment
-    return device, geometries, torch
+    return device, geometries, load, model_config, root, storage, store, torch
 
 
 @app.cell
-def _(device, geometries, torch):
-    # Smoke check: exact code and §3 forward on random energies, for every pair.
+def smoke(device, geometries, torch):
+    # Exact code and §3 forward on random energies, for every pair.
     from lpap.codec import decoded_energy, frontend
     from lpap.lpap import exact_code
 
-    smoke = {}
-    energy = torch.randn(4, 1024, device=device)
-    for name, geometry in geometries.items():
-        code = exact_code(energy, geometry)
-        if geometry.is_lossless:
-            smoke[name] = bool(torch.equal(code.amplitudes, energy))
+    smoke_results = {}
+    _energy = torch.randn(4, 1024, device=device)
+    for _name, _geometry in geometries.items():
+        _code = exact_code(_energy, _geometry)
+        if _geometry.is_lossless:
+            smoke_results[_name] = bool(torch.equal(_code.amplitudes, _energy))
             continue
-        inputs = frontend(geometry.fold(energy), code, geometry)
-        oracle = torch.nn.functional.one_hot(code.probes, geometry.probe_count).float()
-        decoded = decoded_energy(inputs, oracle, geometry)
-        smoke[name] = bool(torch.equal(decoded.gather(1, code.sources), code.amplitudes))
-    smoke
+        _inputs = frontend(_geometry.fold(_energy), _code, _geometry)
+        _oracle = torch.nn.functional.one_hot(_code.probes, _geometry.probe_count).float()
+        _decoded = decoded_energy(_inputs, _oracle, _geometry)
+        smoke_results[_name] = bool(torch.equal(_decoded.gather(1, _code.sources), _code.amplitudes))
+    smoke_results
     return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## 1. Flow
-        _Not implemented yet._
+    images_button = mo.ui.run_button(label="Load images")
+    images_button
+    return (images_button,)
 
-        ## 2. Energy bank
-        _Not implemented yet._
 
-        ## 3. Surrogates
-        _Not implemented yet._
+@app.cell
+def images(device, images_button, mo, root, storage):
+    mo.stop(not images_button.value, mo.md("_Press **Load images** (downloads 1.2 GB on first use)._"))
+    from lpap.data import ImageSet, ensure_images, load_images
 
-        ## 4. Decoders
-        _Not implemented yet._
-
-        ## 5. Autoencoder
-        _Not implemented yet._
-        """
+    image_set = ImageSet(
+        load_images(ensure_images(root, bucket=storage.images_bucket, remote=storage.images_remote)), device
     )
+    {"images": image_set.images.shape[0], "train": image_set.train.numel(), "validation": image_set.validation.numel()}
+    return (image_set,)
+
+
+@app.cell
+def _(mo):
+    import time as _time
+
+    def progress_view(title):
+        """Progress callback for ``runtime.run``: redraws the cell output at most every 5 s."""
+        last = {"time": 0.0, "train": {}, "validation": {}}
+
+        def update(event):
+            last.update({key: value for key, value in event.items() if key in ("train", "validation")})
+            now = _time.monotonic()
+            if now - last["time"] < 5.0 and event["step"] != event["target"]:
+                return
+            last["time"] = now
+            rows = [
+                f"| {split} | {name} | {value:.5g} |"
+                for split in ("train", "validation")
+                for name, value in last[split].items()
+            ]
+            mo.output.replace(
+                mo.vstack(
+                    [
+                        mo.md(f"**{title}**: step {event['step']} / {event['target']}, best {event['best']:.5g}"),
+                        mo.md("| split | metric | value |\n| --- | --- | --- |\n" + "\n".join(rows)),
+                    ]
+                )
+            )
+
+        return update
+
+    return (progress_view,)
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## 1. Flow
+
+    Bidirectional field on images and signed log-normal prior draws. Best
+    checkpoint = lowest validation flow-matching loss.
+    """)
+    return
+
+
+@app.cell
+def flow_config(load, mo):
+    from lpap.runtime.config import to_dict
+    from lpap.stages import flow as flow_stage
+
+    flow_overrides = {}
+    flow_cfg = load(flow_stage.FlowStageConfig, "flow", flow_overrides)
+    flow_button = mo.ui.run_button(label="Train flow")
+    mo.vstack([mo.tree(to_dict(flow_cfg)), flow_button])
+    return flow_button, flow_cfg, flow_stage
+
+
+@app.cell
+def flow_train(flow_button, flow_cfg, flow_stage, image_set, mo, model_config, progress_view, store):
+    mo.stop(not flow_button.value, mo.md("_Press **Train flow**. Interrupt the kernel to save and stop._"))
+    flow_result = flow_stage.train(model_config, flow_cfg, image_set, store, progress_view("flow"))
+    flow_result
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## 2. Energy bank
+    _Not implemented yet._
+
+    ## 3. Surrogates
+    _Not implemented yet._
+
+    ## 4. Decoders
+    _Not implemented yet._
+
+    ## 5. Autoencoder
+    _Not implemented yet._
+    """)
     return
 
 

@@ -1,0 +1,4 @@
+# Public image archive (HF storage bucket) and private run artifacts (HF model repo).
+images_bucket = "matovitch/lpap-images"
+images_remote = "images_32x32_gray.pt.zst"
+artifacts_repo = "matovitch/lpap-v2-runs"
