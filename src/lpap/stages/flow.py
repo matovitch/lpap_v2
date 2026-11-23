@@ -62,11 +62,11 @@ def learning_rate(config: FlowStageConfig, step: int) -> float:
 class FlowTask:
     """Trains ``field``; validation, gallery and exported weights use the EMA copy."""
 
-    best_metric = "fm_euler"
-
     def __init__(self, model: ModelConfig, config: FlowStageConfig, images: ImageSet) -> None:
         self.model = model
         self.config = config
+        # Downstream stages need encode/render fidelity at the energy-bank step count (the largest).
+        self.best_metric = f"round_trip_l2_{max(config.round_trip_steps)}"
         self.images = images
         self.device = images.device
         torch.manual_seed(config.seed)
@@ -131,8 +131,8 @@ class FlowTask:
     def validate(self) -> dict[str, float]:
         """Fixed images, prior draws and times: comparable across steps and runs. fp32.
 
-        ``fm_euler``: loss at the Euler midpoints the integrators query (best
-        metric; ``flow_matching`` also weighs ``|t| → 0``, where the halves are
+        ``fm_euler``: loss at the Euler midpoints the integrators query
+        (``flow_matching`` also weighs ``|t| → 0``, where the halves are
         indistinguishable). ``fm_<half>_a<α>``: loss at a fixed prior weight ``α`` (bands separate the
         irreducible floor near each end from learnable error). ``round_trip_l2_<k>``:
         encode then render with ``k`` Euler steps each.

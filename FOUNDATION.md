@@ -307,6 +307,12 @@ What the loss can and cannot show (measured on the v3 bridge, see
   curved and Euler round trips degrade (4 steps loses the image mean first).
   Knobs `flow.time_scale` and `time_concentration` lower the velocity error
   but worsen round trips, so they keep the v3 values (1.0, 0.1).
+- **Round-trip loss.** Stage 1 therefore adds `‖render₄(encode₄(I)) − I‖²`
+  (weight 1, 32 images per batch, fp32, backprop through the 8 field calls)
+  and pairs images with prior draws by minibatch OT. At 5k steps this takes
+  4-step round-trip L2 from 0.165 to 0.0006 and 16-step from 0.016 to 0.0065,
+  for about +10 % `fm_euler` and 2.5× step time. The best checkpoint is the
+  lowest `round_trip_l2_16`.
 
 Validation therefore reports, on fixed images, draws and times: the Beta-weighted
 loss, `fm_euler` (loss at the Euler midpoints the integrators use), per-band
@@ -387,7 +393,7 @@ end-to-end pipeline runner.
 
 | # | Stage | Data | Trains | Frozen / absent | Loss | Budget (start) |
 | - | --- | --- | --- | --- | --- | --- |
-| 1 | Flow | images + prior draws | flow field (EMA exported) | — | §4.1 | 20k steps, batch 256, lr 3e-4 (warmup + cosine), EMA 0.999 |
+| 1 | Flow | images + prior draws | flow field (EMA exported) | — | §4.1 | 20k steps, batch 256, lr 3e-4 (warmup + cosine), EMA 0.999, OT coupling, round-trip loss (w 1, 4 steps); best = lowest `round_trip_l2_16` |
 | 2 | Energy bank | images | — (no params) | flow | — | 16-step i2e encode of every image |
 | 3 | Surrogates (per lossy pair) | bank rows | surrogate | — | §4.2 | v3 budgets (~960k samples per pair) |
 | 4 | Decoders (per lossy pair) | bank rows, exact codes | decoder | — (no surrogate) | §4.3 | v3 budgets |
