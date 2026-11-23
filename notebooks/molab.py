@@ -186,6 +186,7 @@ def flow_sweep_config(mo):
     flow_sweep_steps = 5000
     flow_sweep = {
         "base": ({}, {}),
+        "base_fp32": ({}, {"bf16": False}),
         "ts1000": ({"flow.time_scale": 1000.0}, {}),
         "c1": ({}, {"time_concentration": 1.0}),
         "ts1000_c1": ({"flow.time_scale": 1000.0}, {"time_concentration": 1.0}),

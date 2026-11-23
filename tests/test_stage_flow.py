@@ -18,6 +18,8 @@ def test_flow_stage_trains_resumes_and_exports(tmp_path):
         "gallery_count": 3,
         "gallery_sample_steps": [1, 2],
         "warmup_steps": 2,
+        "compile": False,
+        "bf16": False,
         "run.steps": 6,
         "run.log_every": 1,
         "run.validate_every": 3,

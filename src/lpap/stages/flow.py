@@ -31,6 +31,8 @@ class FlowStageConfig:
     min_lr_ratio: float
     ema_decay: float
     max_grad_norm: float
+    compile: bool
+    bf16: bool
     time_eps: float
     time_concentration: float
     validation_seed: int
@@ -66,6 +68,9 @@ class FlowTask:
         torch.manual_seed(config.seed)
         self.field = FlowField(model.flow).to(self.device)
         self.ema = copy.deepcopy(self.field).requires_grad_(False)
+        # Compiled views share parameters with the eager modules; checkpoints use the eager ones.
+        self.train_field = torch.compile(self.field) if config.compile else self.field
+        self.eval_field = torch.compile(self.ema) if config.compile else self.ema
         self.optimizer = torch.optim.AdamW(self.field.parameters(), lr=config.learning_rate)
         self.generator = torch.Generator().manual_seed(config.seed)
         self.step = 0
@@ -96,7 +101,9 @@ class FlowTask:
             group["lr"] = rate
         image = self.images.sample_train(self.config.batch_size, self.generator)
         prior = self._prior(image.shape[0], self.generator)
-        loss = flow_matching(self.field, image, prior, self._time(image.shape[0], self.generator))
+        time = self._time(image.shape[0], self.generator)
+        with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.config.bf16):
+            loss = flow_matching(self.train_field, image, prior, time)
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(self.field.parameters(), self.config.max_grad_norm)
@@ -108,7 +115,7 @@ class FlowTask:
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
-        """Fixed images, prior draws and times: comparable across steps and runs.
+        """Fixed images, prior draws and times: comparable across steps and runs. fp32.
 
         ``fm_euler``: loss at the Euler midpoints the integrators query (best
         metric; ``flow_matching`` also weighs ``|t| → 0``, where the halves are
@@ -116,7 +123,8 @@ class FlowTask:
         irreducible floor near each end from learnable error). ``round_trip_l2_<k>``:
         encode then render with ``k`` Euler steps each.
         """
-        field = self.ema.eval()
+        self.ema.eval()
+        field = self.eval_field
         config = self.config
         generator = torch.Generator().manual_seed(config.validation_seed)
         totals: dict[str, float] = {}
