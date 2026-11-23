@@ -80,7 +80,6 @@ def flow_matching(
     return (field(state, time) - target).float().square().mean()
 
 
-
 def round_trip_l2(
     field: nn.Module, image: Float[torch.Tensor, "batch 1 n"], steps: int, *, bf16: bool = False
 ) -> torch.Tensor:

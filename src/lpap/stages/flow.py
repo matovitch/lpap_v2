@@ -50,8 +50,11 @@ class FlowStageConfig:
     run: RunConfig
 
 
-def learning_rate(config: FlowStageConfig, step: int) -> float:
-    """Linear warmup, then cosine down to ``min_lr_ratio`` at the step target."""
+def learning_rate(config: Any, step: int) -> float:
+    """Linear warmup, then cosine down to ``min_lr_ratio`` at the step target.
+
+    ``config``: any stage config with ``learning_rate``, ``warmup_steps``, ``min_lr_ratio`` and ``run.steps``.
+    """
     if step < config.warmup_steps:
         return config.learning_rate * (step + 1) / config.warmup_steps
     span = max(config.run.steps - config.warmup_steps, 1)

@@ -171,7 +171,7 @@ def flow_config(load, mo):
     flow_cfg = load(flow_stage.FlowStageConfig, "flow", flow_overrides)
     flow_button = mo.ui.run_button(label="Train flow")
     mo.vstack([mo.tree(to_dict(flow_cfg)), flow_button])
-    return flow_button, flow_cfg, flow_stage
+    return flow_button, flow_cfg, flow_stage, to_dict
 
 
 @app.cell
@@ -269,11 +269,57 @@ def bank(bank_button, bank_cfg, bank_stage, image_set, mo, model_config, store):
 
 
 @app.cell
+def surrogate_config(geometries, load, mo, to_dict):
+    from lpap.stages import surrogate as surrogate_stage
+
+    surrogate_pairs = [_name for _name, _geometry in geometries.items() if not _geometry.is_lossless]
+    surrogate_cfg = load(surrogate_stage.SurrogateStageConfig, "surrogate", {})
+    surrogate_button = mo.ui.run_button(label="Train surrogates")
+    mo.vstack(
+        [
+            mo.md(f"""
+    ## 3. Surrogates
+
+    One run `surrogate-<pair>` per lossy pair ({", ".join(surrogate_pairs)}): bank rows,
+    exact LPAP local classes as targets, `|a*|`-weighted CE. Best checkpoint =
+    lowest validation `surrogate_ce`.
+    """),
+            mo.tree(to_dict(surrogate_cfg)),
+            surrogate_button,
+        ]
+    )
+    return surrogate_button, surrogate_cfg, surrogate_pairs, surrogate_stage
+
+
+@app.cell
+def surrogate_train(
+    energy_bank,
+    geometries,
+    mo,
+    model_config,
+    progress_view,
+    store,
+    surrogate_button,
+    surrogate_cfg,
+    surrogate_pairs,
+    surrogate_stage,
+):
+    mo.stop(not surrogate_button.value, mo.md("_Press **Train surrogates**. Interrupt the kernel to save and stop._"))
+    surrogate_results = {}
+    for _pair in surrogate_pairs:
+        _result = surrogate_stage.train(
+            model_config, surrogate_cfg, geometries[_pair], energy_bank, store, progress_view(f"surrogate {_pair}")
+        )
+        surrogate_results[_pair] = _result.last_validation
+        if _result.reason == "interrupt":
+            break
+    surrogate_results
+    return (surrogate_results,)
+
+
+@app.cell
 def _(mo):
     mo.md("""
-    ## 3. Surrogates
-    _Not implemented yet._
-
     ## 4. Decoders
     _Not implemented yet._
 

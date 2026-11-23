@@ -1,0 +1,20 @@
+# Stage 3: surrogates, one run per lossy pair (FOUNDATION §4.2, §5).
+# v3 budget: 938 steps × 1024 = 960k bank rows per pair (v3 used a constant lr 2.8e-3).
+seed = 123
+batch_size = 1024
+learning_rate = 2.8e-3
+warmup_steps = 50
+min_lr_ratio = 0.1
+max_grad_norm = 1.0
+compile = true
+bf16 = true            # autocast for the training forward only; CE and validation stay fp32
+validation_batch_size = 1024
+validation_batch_count = 4
+
+[run]
+steps = 938
+budget_minutes = 120
+log_every = 10
+validate_every = 100
+checkpoint_every = 200
+upload_every = 469

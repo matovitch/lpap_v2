@@ -45,4 +45,3 @@ def test_flow_matching_is_zero_for_the_oracle_field():
         return torch.where((t <= 0)[:, None, None], prior - image, image - prior)
 
     assert float(flow_matching(oracle, image, prior, time)) == 0.0
-
