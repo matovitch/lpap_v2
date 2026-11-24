@@ -319,11 +319,76 @@ def surrogate_train(
 
 
 @app.cell
+def decoder_config(geometries, load, mo, to_dict):
+    from lpap.stages import decoder as decoder_stage
+
+    decoder_pairs = [_name for _name, _geometry in geometries.items() if not _geometry.is_lossless]
+    decoder_pair_settings = {
+        "c128_k16": {"batch_size": 1024, "learning_rate": 2.8e-3, "run.steps": 938},
+        "c256_k24": {"batch_size": 512, "learning_rate": 2.0e-3, "run.steps": 1875},
+        "c512_k32": {"batch_size": 256, "learning_rate": 1.4e-3, "run.steps": 3750},
+    }
+    decoder_cfg = load(decoder_stage.DecoderStageConfig, "decoder", {})
+    decoder_button = mo.ui.run_button(label="Train decoders")
+    mo.vstack(
+        [
+            mo.md(f"""
+    ## 4. Decoders
+
+    One run `decoder-<pair>` per lossy pair ({", ".join(decoder_pairs)}). Exact LPAP
+    codes provide inputs and probe targets; `|a*|`-weighted probe CE trains only
+    the decoder. Per-pair batch/LR/step settings match v3's ~960k-sample budget.
+    """),
+            mo.tree(to_dict(decoder_cfg)),
+            mo.md(
+                "| pair | batch | lr | steps |\n| --- | ---: | ---: | ---: |\n"
+                + "\n".join(
+                    f"| {name} | {settings['batch_size']} | {settings['learning_rate']:.2g} | {settings['run.steps']} |"
+                    for name, settings in decoder_pair_settings.items()
+                )
+            ),
+            decoder_button,
+        ]
+    )
+    return decoder_button, decoder_cfg, decoder_pair_settings, decoder_pairs, decoder_stage
+
+
+@app.cell
+def decoder_train(
+    decoder_button,
+    decoder_cfg,
+    decoder_pair_settings,
+    decoder_pairs,
+    decoder_stage,
+    energy_bank,
+    geometries,
+    load,
+    mo,
+    model_config,
+    progress_view,
+    store,
+):
+    mo.stop(not decoder_button.value, mo.md("_Press **Train decoders**. Interrupt the kernel to save and stop._"))
+    decoder_results = {}
+    for _pair in decoder_pairs:
+        _config = load(
+            decoder_stage.DecoderStageConfig,
+            "decoder",
+            {**decoder_pair_settings[_pair], "seed": 456 + decoder_pairs.index(_pair)},
+        )
+        _result = decoder_stage.train(
+            model_config, _config, geometries[_pair], energy_bank, store, progress_view(f"decoder {_pair}")
+        )
+        decoder_results[_pair] = _result.last_validation
+        if _result.reason == "interrupt":
+            break
+    decoder_results
+    return (decoder_results,)
+
+
+@app.cell
 def _(mo):
     mo.md("""
-    ## 4. Decoders
-    _Not implemented yet._
-
     ## 5. Autoencoder
     _Not implemented yet._
     """)

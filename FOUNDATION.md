@@ -410,7 +410,7 @@ end-to-end pipeline runner.
 | 1 | Flow | images + prior draws | flow field (EMA exported) | — | §4.1 | 20k steps, batch 256, lr 3e-4 (warmup + cosine), EMA 0.999, round-trip loss (w 1, 4 steps, bf16, every 4th step); best = lowest `objective` (§4.1) |
 | 2 | Energy bank | images | — (no params) | flow | — | 4-step i2e encode of every image (fp32), held in GPU memory as float16, never stored |
 | 3 | Surrogates (per lossy pair) | bank rows | surrogate | — | §4.2 | 938 steps × batch 1024 (v3's 960k samples per pair), lr 2.8e-3 (warmup 50 + cosine), bf16 training forward; best = lowest validation `surrogate_ce` |
-| 4 | Decoders (per lossy pair) | bank rows, exact codes | decoder | — (no surrogate) | §4.3 | v3 budgets |
+| 4 | Decoders (per lossy pair) | bank rows, exact codes | decoder | — (no surrogate) | §4.3 | v3 budgets: 938 × 1024 (c128, lr 2.8e-3), 1875 × 512 (c256, lr 2.0e-3), 3750 × 256 (c512, lr 1.4e-3); best = lowest validation `probe_ce` |
 | 5 | AE (all pairs) | images | encoder, renderer, decoders; surrogates by CE only | — | §4.6 | ~120k steps, batch 64 (try 128) |
 
 Notes:

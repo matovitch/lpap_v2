@@ -1,0 +1,20 @@
+# Stage 4: decoder for c128_k16. The notebook applies v3's pair-specific
+# batch/LR/step settings for c256_k24 and c512_k32.
+seed = 456
+batch_size = 1024
+learning_rate = 2.8e-3
+warmup_steps = 50
+min_lr_ratio = 0.1
+max_grad_norm = 1.0
+compile = true
+bf16 = true
+validation_batch_size = 256
+validation_batch_count = 4
+
+[run]
+steps = 938
+budget_minutes = 120
+log_every = 10
+validate_every = 100
+checkpoint_every = 200
+upload_every = 469
