@@ -1,0 +1,26 @@
+# Stage 5: autoencoder over all pairs (FOUNDATION §4.4–4.6, §5). v3: lr 2.8e-5, batch 64, 35k steps.
+seed = 2987
+batch_size = 64
+learning_rate = 2.8e-5
+warmup_steps = 500
+min_lr_ratio = 0.1
+max_grad_norm = 1.0
+compile = true
+bf16 = true                  # autocast for flow calls, surrogates and decoders; LPAP and losses stay fp32
+integration_steps = 4        # encoder and renderer Euler steps (stage 1 trained count)
+surrogate_weight = 0.05      # λ_s
+probe_weight = 0.05          # λ_d
+signed_mass_weight = 0.01    # λ_m
+signed_mass_tau = 0.1
+surrogate_gradient = true    # false: amplitude-only baseline (§3.4), no z path
+validation_batch_size = 64
+validation_batch_count = 4
+gallery_count = 16
+
+[run]
+steps = 35000
+budget_minutes = 600
+log_every = 25
+validate_every = 500
+checkpoint_every = 500
+upload_every = 2500

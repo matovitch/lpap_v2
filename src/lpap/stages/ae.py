@@ -1,0 +1,258 @@
+"""Stage 5: the autoencoder over all pairs (FOUNDATION §3, §4.4–4.6, §5).
+
+Forward = inference: encode 4 steps, exact LPAP per pair, decoder, scatter,
+render 4 steps. Gradients follow §3: categorical ST through the frozen-param
+surrogate call, split probe ST in the scatter, surrogate and decoder CEs on
+detached inputs.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import torch
+from torch import nn
+
+from lpap.codec import decoded_energy, frontend, surrogate_through
+from lpap.data import ImageSet
+from lpap.flow import integrate
+from lpap.gallery import energy_tiles, grid, image_tiles, write_png
+from lpap.geometry import PairGeometry
+from lpap.losses import accuracies, image_l2, probe_ce, signed_mass, surrogate_ce
+from lpap.lpap import exact_code
+from lpap.runtime import checkpoint
+from lpap.runtime.config import ModelConfig, to_dict
+from lpap.runtime.hub import ArtifactStore
+from lpap.runtime.run import BEST, ProgressFn, RunConfig, RunResult, run
+from lpap.stages import decoder as decoder_stage
+from lpap.stages import surrogate as surrogate_stage
+from lpap.stages.flow import learning_rate, load_field, top_share
+
+RUN = "ae"
+
+
+@dataclass(frozen=True)
+class AEStageConfig:
+    seed: int
+    batch_size: int
+    learning_rate: float
+    warmup_steps: int
+    min_lr_ratio: float
+    max_grad_norm: float
+    compile: bool
+    bf16: bool
+    integration_steps: int
+    surrogate_weight: float
+    probe_weight: float
+    signed_mass_weight: float
+    signed_mass_tau: float
+    surrogate_gradient: bool
+    validation_batch_size: int
+    validation_batch_count: int
+    gallery_count: int
+    run: RunConfig
+
+
+def check_pair(store: ArtifactStore, run_name: str, geometry: PairGeometry) -> None:
+    """The teacher checkpoint must have been trained on the same pair spec (hence the same ``G``)."""
+    path = store.fetch(run_name, BEST)
+    if path is None:
+        raise FileNotFoundError(f"no best checkpoint for {run_name}")
+    config = checkpoint.load(path)["config"]
+    specs = {pair["name"]: pair for pair in config["model"]["pairs"]}
+    if specs.get(geometry.name) != to_dict(geometry.spec):
+        raise ValueError(f"{run_name} was trained on {specs.get(geometry.name)}, not {to_dict(geometry.spec)}")
+
+
+class AETask:
+    best_metric = "image_l2"
+
+    def __init__(
+        self,
+        model: ModelConfig,
+        config: AEStageConfig,
+        geometries: dict[str, PairGeometry],
+        images: ImageSet,
+        store: ArtifactStore,
+    ) -> None:
+        self.config = config
+        self.geometries = geometries
+        self.lossy = [name for name, geometry in geometries.items() if not geometry.is_lossless]
+        self.images = images
+        self.device = images.device
+        torch.manual_seed(config.seed)
+        self.encoder = load_field(model, store, self.device)
+        self.renderer = load_field(model, store, self.device)
+        self.surrogates = nn.ModuleDict()
+        self.decoders = nn.ModuleDict()
+        for name in self.lossy:
+            geometry = geometries[name]
+            check_pair(store, surrogate_stage.run_name(name), geometry)
+            check_pair(store, decoder_stage.run_name(name), geometry)
+            self.surrogates[name] = surrogate_stage.load_surrogate(model, geometry, store, self.device)
+            self.decoders[name] = decoder_stage.load_decoder(model, geometry, store, self.device)
+        self.modules = nn.ModuleDict(
+            {
+                "encoder": self.encoder,
+                "renderer": self.renderer,
+                "surrogates": self.surrogates,
+                "decoders": self.decoders,
+            }
+        )
+        compiled = torch.compile if config.compile else (lambda module: module)
+        self.run_encoder = compiled(self.encoder)
+        self.run_renderer = compiled(self.renderer)
+        self.run_surrogates = {name: compiled(module) for name, module in self.surrogates.items()}
+        self.run_decoders = {name: compiled(module) for name, module in self.decoders.items()}
+        self.optimizer = torch.optim.AdamW(self.modules.parameters(), lr=config.learning_rate)
+        self.generator = torch.Generator().manual_seed(config.seed)
+        self.step = 0
+        self.validation_images = images.validation_batches(config.validation_batch_size, config.validation_batch_count)
+
+    def _autocast(self) -> torch.autocast:
+        return torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.config.bf16)
+
+    def _encode(self, image: torch.Tensor) -> torch.Tensor:
+        steps = self.config.integration_steps
+        return integrate(self.run_encoder, image, t0=-1.0, t1=0.0, steps=steps, bf16=self.config.bf16).squeeze(1)
+
+    def _render(self, decoded: list[torch.Tensor]) -> list[torch.Tensor]:
+        """One renderer call for all pairs (batch ``pairs · B``)."""
+        steps = self.config.integration_steps
+        stacked = torch.cat(decoded).unsqueeze(1)
+        return list(
+            integrate(self.run_renderer, stacked, t0=0.0, t1=1.0, steps=steps, bf16=self.config.bf16).chunk(
+                len(decoded)
+            )
+        )
+
+    def _lossy(self, name: str, energy: torch.Tensor, *, train: bool) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Decoded energy of one lossy pair plus its CE terms and diagnostics."""
+        geometry = self.geometries[name]
+        tokens = geometry.fold(energy)
+        code = exact_code(energy, geometry)
+        weights = code.amplitudes.abs()
+        with self._autocast():
+            surrogate_logits = self.run_surrogates[name](tokens.detach())
+            routed = None
+            if train and self.config.surrogate_gradient:
+                routed = surrogate_through(self.surrogates[name], tokens)
+        inputs = frontend(tokens, code, geometry, None if routed is None else routed.float())
+        detached = inputs.detach()
+        batch = energy.shape[0]
+        with self._autocast():
+            # Live inputs for the image loss and detached ones for the probe CE, in one decoder call.
+            probe_logits = self.run_decoders[name](
+                torch.cat([inputs.amplitudes, detached.amplitudes]),
+                torch.cat([inputs.dib_weights, detached.dib_weights]),
+            ).float()
+        live_logits, ce_logits = probe_logits[:batch], probe_logits[batch:]
+        decoded = decoded_energy(inputs, live_logits, geometry)
+        surrogate_accuracy, surrogate_weighted = accuracies(surrogate_logits, code.local_classes, weights)
+        probe_accuracy, probe_weighted = accuracies(ce_logits, code.probes, weights)
+        kept = code.amplitudes.square().sum(-1) / energy.detach().square().sum(-1).clamp_min(1e-12)
+        terms = {
+            "surrogate_ce": surrogate_ce(surrogate_logits, code),
+            "probe_ce": probe_ce(ce_logits, code),
+            "surrogate_accuracy": surrogate_accuracy,
+            "surrogate_weighted_accuracy": surrogate_weighted,
+            "probe_accuracy": probe_accuracy,
+            "probe_weighted_accuracy": probe_weighted,
+            "kept_share": kept.mean(),
+        }
+        return decoded, terms
+
+    def _forward(self, image: torch.Tensor, *, train: bool) -> tuple[torch.Tensor, dict[str, torch.Tensor], list]:
+        config = self.config
+        energy = self._encode(image)
+        decoded, metrics = [], {}
+        for name, geometry in self.geometries.items():
+            if geometry.is_lossless:
+                decoded.append(energy)
+                continue
+            pair_decoded, terms = self._lossy(name, energy, train=train)
+            decoded.append(pair_decoded)
+            metrics.update({f"{key}_{name}": value for key, value in terms.items()})
+        renders = self._render(decoded)
+        for name, render in zip(self.geometries, renders, strict=True):
+            metrics[f"image_l2_{name}"] = image_l2(render, image)
+        metrics["image_l2"] = torch.stack([metrics[f"image_l2_{name}"] for name in self.geometries]).mean()
+        metrics["signed_mass"] = signed_mass(energy, config.signed_mass_tau)
+        loss = metrics["image_l2"] + config.signed_mass_weight * metrics["signed_mass"]
+        if self.lossy:
+            for key, weight in (("surrogate_ce", config.surrogate_weight), ("probe_ce", config.probe_weight)):
+                metrics[key] = torch.stack([metrics[f"{key}_{name}"] for name in self.lossy]).mean()
+                loss = loss + weight * metrics[key]
+        metrics["loss"] = loss
+        return energy, metrics, renders
+
+    def train_step(self) -> dict[str, torch.Tensor | float]:
+        self.modules.train()
+        rate = learning_rate(self.config, self.step)
+        for group in self.optimizer.param_groups:
+            group["lr"] = rate
+        image = self.images.sample_train(self.config.batch_size, self.generator)
+        _, metrics, _ = self._forward(image, train=True)
+        self.optimizer.zero_grad(set_to_none=True)
+        metrics["loss"].backward()
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.modules.parameters(), self.config.max_grad_norm)
+        self.optimizer.step()
+        self.step += 1
+        return {**{name: value.detach() for name, value in metrics.items()}, "grad_norm": grad_norm, "lr": rate}
+
+    @torch.no_grad()
+    def validate(self) -> dict[str, float]:
+        """Fixed validation images. ``kept_share_<pair>``: share of ``‖x‖²`` the exact code keeps."""
+        self.modules.eval()
+        totals: dict[str, float] = {}
+        for image in self.validation_images:
+            energy, metrics, _ = self._forward(image, train=False)
+            metrics["energy_mean"] = energy.mean()
+            metrics["energy_std"] = energy.std()
+            metrics["energy_top10"] = top_share(energy, 0.1)
+            for name, value in metrics.items():
+                totals[name] = totals.get(name, 0.0) + float(value) / len(self.validation_images)
+        return totals
+
+    @torch.no_grad()
+    def gallery(self, path: Path) -> Path:
+        """Rows: images, energies, then one reconstruction row per pair (model config order)."""
+        self.modules.eval()
+        image = self.validation_images[0][: self.config.gallery_count]
+        energy, _, renders = self._forward(image, train=False)
+        return write_png(path, grid([image_tiles(image), energy_tiles(energy), *map(image_tiles, renders)]))
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "modules": self.modules.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "generator": self.generator.get_state(),
+            "step": self.step,
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        self.modules.load_state_dict(state["modules"])
+        self.optimizer.load_state_dict(state["optimizer"])
+        self.generator.set_state(state["generator"])
+        self.step = state["step"]
+
+    def weights(self) -> dict[str, Any]:
+        return {"modules": self.modules.state_dict()}
+
+
+def train(
+    model: ModelConfig,
+    config: AEStageConfig,
+    geometries: dict[str, PairGeometry],
+    images: ImageSet,
+    store: ArtifactStore,
+    progress: ProgressFn | None = None,
+    *,
+    name: str = RUN,
+) -> RunResult:
+    """Train every pair jointly into run ``name``; teachers and flow come from stages 1, 3 and 4."""
+    task = AETask(model, config, geometries, images, store)
+    resolved = {"model": to_dict(model), "stage": to_dict(config), "pairs": list(geometries)}
+    return run(task, run=name, config=resolved, run_config=config.run, store=store, progress=progress)

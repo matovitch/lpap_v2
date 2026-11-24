@@ -387,12 +387,35 @@ def decoder_train(
 
 
 @app.cell
-def _(mo):
-    mo.md("""
+def ae_config(load, mo, to_dict):
+    from lpap.stages import ae as ae_stage
+
+    ae_overrides = {}
+    ae_cfg = load(ae_stage.AEStageConfig, "ae", ae_overrides)
+    ae_button = mo.ui.run_button(label="Train autoencoder")
+    mo.vstack(
+        [
+            mo.md("""
     ## 5. Autoencoder
-    _Not implemented yet._
-    """)
-    return
+
+    Run `ae`: encoder and renderer start from the stage-1 flow, surrogates and
+    decoders from stages 3 and 4. Forward = inference (exact LPAP per pair).
+    Best checkpoint = lowest validation mean `image_l2` over all pairs.
+    `kept_share_<pair>` = share of `‖x‖²` the exact code keeps (compressibility).
+    """),
+            mo.tree(to_dict(ae_cfg)),
+            ae_button,
+        ]
+    )
+    return ae_button, ae_cfg, ae_stage
+
+
+@app.cell
+def ae_train(ae_button, ae_cfg, ae_stage, geometries, image_set, mo, model_config, progress_view, store):
+    mo.stop(not ae_button.value, mo.md("_Press **Train autoencoder**. Interrupt the kernel to save and stop._"))
+    ae_result = ae_stage.train(model_config, ae_cfg, geometries, image_set, store, progress_view("autoencoder"))
+    ae_result
+    return (ae_result,)
 
 
 if __name__ == "__main__":

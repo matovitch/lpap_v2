@@ -411,7 +411,7 @@ end-to-end pipeline runner.
 | 2 | Energy bank | images | — (no params) | flow | — | 4-step i2e encode of every image (fp32), held in GPU memory as float16, never stored |
 | 3 | Surrogates (per lossy pair) | bank rows | surrogate | — | §4.2 | 938 steps × batch 1024 (v3's 960k samples per pair), lr 2.8e-3 (warmup 50 + cosine), bf16 training forward; best = lowest validation `surrogate_ce` |
 | 4 | Decoders (per lossy pair) | bank rows, exact codes | decoder | — (no surrogate) | §4.3 | v3 budgets: 938 × 1024 (c128, lr 2.8e-3), 1875 × 512 (c256, lr 2.0e-3), 3750 × 256 (c512, lr 1.4e-3); best = lowest validation `probe_ce` |
-| 5 | AE (all pairs) | images | encoder, renderer, decoders; surrogates by CE only | — | §4.6 | ~120k steps, batch 64 (try 128) |
+| 5 | AE (all pairs) | images | encoder, renderer, decoders; surrogates by CE only | — | §4.6 | v3 budget: 35k steps × batch 64, lr 2.8e-5 (warmup 500 + cosine), bf16 flow/surrogate/decoder calls, one renderer call for all pairs; best = lowest validation mean `image_l2` |
 
 Notes:
 - Stage 4 first-run validation at the full v3 budgets: `c128_k16` probe CE
@@ -423,6 +423,7 @@ Notes:
   from stages 3 and 4. Inference = exact LPAP + decoder + renderer, which
   is exactly the stage-5 forward.
 - Budgets are starting points; runs are monitored live and stopped by hand.
+- Stage 5 also logs `kept_share_<pair>` = `Σ a*² / ‖x‖²`, the share of energy the exact code keeps: the direct measure of the goal (an energy that becomes LPAP-compressible).
 
 ## 6. Metrics and evaluation
 
