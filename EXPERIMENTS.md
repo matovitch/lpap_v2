@@ -127,6 +127,14 @@ within about 2× the seed spread, with no outlier and no restart. σ0 0.3 leads 
   - **Gate (fixed before the S1 15k results):** if no σ0 arm of `s1-r2-s2988` beats its control by more than 1%
     (the rung-1 control seed spread) in validation `image_l2` at 15k, S1 is called negative for early noise:
     `s1-r2-s2987` is skipped and S2 batch A runs next. Otherwise, `s1-r2-s2987` runs first to confirm.
+  - *Caveat on the gate (Camille, 20:56):* its 1% bar is the control seed spread **at 5k**. Paired arms
+    (same seed, same init and data order) start identical and then drift apart. Any small perturbation might
+    open a gap that grows with training ("trajectory luck"), so a single-seed gap at 15k is weak evidence.
+    At 15k, σ0 0.1 is −3.3% vs control on seed 2988, and the galleries show nearly the same heaps in the same
+    places. The reading "same vocabulary, slightly luckier path" is as plausible as "noise helped".
+    Discriminating tests: (a) seed 2987 to 15k, where the sign must repeat; (b) the control seed spread at
+    15k, which may be larger than 1%; (c) optionally, a placebo arm (σ0 0.01) to measure the divergence of a
+    near-null perturbation.
   - Hypotheses. H4: with a long decay, some σ0 > 0 beats control at 20k by more than 1%. H5: the footprint
     shape changes (cv down, span up, as seen for S1 σ0 1 at 5k) and the change persists at 20k.
 - **S3: encoder steps × noise.** A 2 × 2 design (encoder 4 / 8 steps; renderer 4) × (no noise / best or
