@@ -217,7 +217,11 @@ class AETask:
             metrics[f"image_l2_{name}"] = image_l2(render, image)
         metrics["image_l2"] = torch.stack([metrics[f"image_l2_{name}"] for name in self.geometries]).mean()
         metrics["signed_mass"] = signed_mass(energy, config.signed_mass_tau)
-        loss = metrics["image_l2"] + config.signed_mass_weight * metrics["signed_mass"]
+        metrics["positive_mass"] = energy.detach().relu().mean()
+        metrics["negative_mass"] = (-energy.detach()).relu().mean()
+        loss = metrics["image_l2"]
+        if config.signed_mass_weight > 0:
+            loss = loss + config.signed_mass_weight * metrics["signed_mass"]
         if self.lossy:
             for key, weight in (("surrogate_ce", config.surrogate_weight), ("probe_ce", config.probe_weight)):
                 metrics[key] = torch.stack([metrics[f"{key}_{name}"] for name in self.lossy]).mean()

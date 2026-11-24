@@ -382,13 +382,28 @@ Trains: encoder only. It is the only constraint on the energy distribution:
 the energy is otherwise free to move away from the flow prior (the goal is to
 learn a new, LPAP-compressible distribution).
 
+Monitor only since AE step 15k (`λ_m = 0`; `signed_mass`, `positive_mass`,
+`negative_mass` still logged). Measured on the step-15k checkpoint:
+
+- Its value is tiny (≈ 0.002), but its gradient is not: with the floor inactive,
+  `∇ = (2/τ)·√L·∇(mean x)`, and `mean x` over 65k outputs moves coherently with
+  `output.weight` (88 % of the gradient). Per batch, `‖∇‖ ≈ 6.4` (unweighted)
+  vs 0.036 for lossless image L2.
+- It is rank-1 and mostly noise: per-batch gradients have cosine ±1 with their
+  mean, and their sign follows each batch's mean (−0.010 to +0.017).
+- The floor fights the goal: as energy concentrates, `mean|x|` falls at constant
+  `‖x‖`. At step 15k, `min(m+, m−) = 0.094 < τ`, so the floor starts penalising
+  sparsity.
+
+Re-enable (gap only) if `energy_mean` drifts away from 0.
+
 ### 4.6 AE total
 
 ```
 L_AE = L_img + λ_s mean_lossy CE_surr + λ_d mean_lossy CE_probe + λ_m L_signed
 ```
 
-Starting values: `λ_s = 0.05`, `λ_m = 0.01` (v3); `λ_d` to be set from a
+Starting values: `λ_s = 0.05`, `λ_m = 0.01` (v3; 0 from step 15k, §4.5); `λ_d` to be set from a
 magnitude probe at step 0.
 
 `mean_lossy` terms are 0 when the pair list has no lossy pair.
