@@ -150,25 +150,54 @@ on objects. Its 8-image render L2 is no better at 5k. The 15k check is whether t
 
 ## Planned (not pre-registered yet)
 
-- **S2: long noise (decided 19:05; arms in `experiments.py` as `s2-a` and `s2-b`).** S1's 2.5k decay ended before the
-  patch structure formed (footprints still growing at 5k), so it only tested *early* noise. Setup: a 20k schedule,
-  10k linear decay, judged at 20k, seed 2988 first. The arms form a dose ladder (dose ∝ σ0² × decay, ×4 per level):
-  σ0 0.5 (same dose as S1's σ0 1), 1 (4×) and 2 (16×; noise above signal for 5k steps, which probes the ceiling),
-  plus a control (needed again: the 20k schedule changes the LR).
-  Batch A = control, σ0 1 and σ0 2 (≈ 6h); batch B = σ0 0.5, plus second seeds of the standouts.
-  - **Gate (fixed before the S1 15k results):** if no σ0 arm of `s1-r2-s2988` beats its control by more than 1%
-    (the rung-1 control seed spread) in validation `image_l2` at 15k, S1 is called negative for early noise:
-    `s1-r2-s2987` is skipped and S2 batch A runs next. Otherwise, `s1-r2-s2987` runs first to confirm.
-  - *Caveat on the gate (Camille, 20:56):* its 1% bar is the control seed spread **at 5k**. Paired arms
-    (same seed, same init and data order) start identical and then drift apart. Any small perturbation might
-    open a gap that grows with training ("trajectory luck"), so a single-seed gap at 15k is weak evidence.
-    At 15k, σ0 0.1 is −3.3% vs control on seed 2988, and the galleries show nearly the same heaps in the same
-    places. The reading "same vocabulary, slightly luckier path" is as plausible as "noise helped".
-    Discriminating tests: (a) seed 2987 to 15k, where the sign must repeat; (b) the control seed spread at
-    15k, which may be larger than 1%; (c) optionally, a placebo arm (σ0 0.01) to measure the divergence of a
-    near-null perturbation.
-  - Hypotheses. H4: with a long decay, some σ0 > 0 beats control at 20k by more than 1%. H5: the footprint
-    shape changes (cv down, span up, as seen for S1 σ0 1 at 5k) and the change persists at 20k.
-- **S3: encoder steps × noise.** A 2 × 2 design (encoder 4 / 8 steps; renderer 4) × (no noise / best or
-  middle σ0) to test whether annealing needs a more expressive encoder (interaction).
-- **Learning-rate control.** lr × 3, to tell "stuck" from "slow".
+- **S1 confirmation: seed 2987 to 15k** (`s1-r2-s2987`), one molab session.
+  - **Gate** (fixed before the 15k results): if no σ0 arm of `s1-r2-s2988` beat control by more than 1% at 15k,
+    seed 2987 would be skipped. The gate passed (see the rung 2 results).
+  - *Caveat (Camille, 20:56): trajectory luck.* Paired arms share init and data order, then drift apart, so a
+    single-seed gap is weak evidence. The sign must repeat on seed 2987. The control seed spread at 15k may also
+    exceed the 1% measured at 5k.
+- **Energy-scale check (code reading, no compute).** σ0 1's energy is about 3× the control's at 15k. List every
+  place where the absolute scale of the energy matters (renderer input, surrogate and probe logits, `usage_kl`,
+  `signed_mass_tau`, LPAP thresholds). Then decide whether part of the −10% could come from scale, not from
+  exploration.
+- **S2: anytime training (draft, to settle before pre-registration).** *Principle (Camille, 23:17):* training
+  should be an unbounded process that the compute budget truncates. Nothing should depend on the planned number
+  of steps. Two parts of today's setup break this: the cosine LR down to `run.steps`, and a noise decay given
+  in steps.
+  - **Optimizer:** schedule-free AdamW (Defazio et al., 2024, `schedulefree` package). It keeps the warmup,
+    has no decay, and its averaged iterate is evaluable at any step. It needs `optimizer.train()` / `.eval()`
+    switching around validation and checkpoints. Rungs then become plain truncations of a single run.
+  - **Noise driven by gradients instead of steps:**
+    - **Primary form:** σ_t = σ_max · ρ_t, where ρ_t = ‖EMA_β(g)‖ / EMA_β(‖g‖) ∈ [0, 1] is a gradient
+      signal-to-noise ratio. Here g is the encoder gradient and β is set by a half-life *h*, in steps.
+    - **Behaviour:** ρ is high while gradients agree (early) and falls as they cancel (near a basin). The noise
+      therefore follows convergence, not the clock. The feedback is negative: more noise means noisier
+      gradients, so ρ falls and the noise falls with it. This should be stable, but it must be checked on the
+      local GPU before molab.
+    - **Alternative:** σ_t = σ_max · EMA(‖g‖) / EMA_max(‖g‖).
+    - Two knobs: σ_max (relative, starting at S1's 1.0) and *h*.
+  - **Arms (seed 2988 first, then 2987):**
+    - (a) schedule-free, no noise;
+    - (b) schedule-free with gradient-driven noise;
+    - reference: the S1 15k cosine arms (control and σ0 1).
+  - **Draft hypotheses:**
+    - H6: (a) matches the cosine control at equal steps within the seed spread, so the optimizer swap alone is
+      neutral or better.
+    - H7: (b) beats (a) by more than the seed spread. It also reproduces σ0 1's signature (sparse, edge-aligned
+      energy; small, local footprints), with no step count anywhere in its configuration.
+- **S3: encoder steps × exploration.** A 2 × 2 design: encoder 4 / 8 steps (renderer 4) × no exploration / the
+  best exploration from S1 or S2. It tests whether escaping the basin needs a more expressive encoder.
+- **Learning-rate control.** LR × 3, to tell "stuck" from "slow". With schedule-free, this becomes a one-knob
+  sensitivity check.
+
+**Dropped or deferred (with reasons):**
+- *S2 as long noise* (a dose ladder σ0 0.5 / 1 / 2 with a 10k decay, decided 19:05). Dropped at 23:30 (Camille):
+  it only tunes a hand-set, budget-dependent schedule, which works against a generic algorithm.
+- *A pull toward the stage-1 energy.* Rejected: stage 1 is only an init and has no claim to the target property
+  (progressive compressibility under LPAP). Kept as a caveat only: σ0 1 ends up closest to stage 1
+  (`stage1_corr` 0.47), so its gain may be init-dependent.
+- *Random LPAP pair per step* (Camille's original "swap" idea, instead of three in parallel). It is stationary
+  and cheaper per step. Deferred: not a priority. A continuous random budget is ruled out because the surrogates
+  and decoders are per-pair.
+- *Batch-size schedule.* It is another budget-dependent schedule, and it injects noise into the weights rather
+  than the energy.
