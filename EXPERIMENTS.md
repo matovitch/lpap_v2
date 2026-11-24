@@ -116,6 +116,14 @@ fixed at 2.5k, so every arm has 2.5k noise-free steps before rung 1.
 ≈ 1%), 0.01095 / 0.01058 for σ0 0.3 (mean 2% below control), 0.01082 for σ0 0.1, and 0.01092 for σ0 1. Every arm is
 within about 2× the seed spread, with no outlier and no restart. σ0 0.3 leads weakly, and σ0 1 keeps the best probe accuracy.
 
+*Observation, 21:05, seed 2988 (not pre-registered): noise inflates the energy.* Train mean |energy| is about
+0.25 in the control throughout. It rises to 0.47 (σ0 0.3) and 1.31 (σ0 1) while the noise is on, then decays
+once σ reaches 0 (σ0 1: 1.03 at 5k). The noise is relative (scaled by a detached rms), so inflating doesn't
+reduce it. Inflation is therefore a side effect, not an escape: it is probably driven by the renderer or the surrogate. In the 5k gallery, with
+each run divided by its own rms, the control, σ0 0.1 and σ0 0.3 show the same scattered texture-like layout.
+σ0 1 is a different solution: the energy follows object edges and structure, and its c128 survivors cluster
+on objects. Its 8-image render L2 is no better at 5k. The 15k check is whether this layout persists and pays off.
+
 ## Planned (not pre-registered yet)
 
 - **S2: long noise (decided 19:05; arms in `experiments.py` as `s2-a` and `s2-b`).** S1's 2.5k decay ended before the
