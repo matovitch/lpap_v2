@@ -442,14 +442,16 @@ def study_config(mo):
 
 @app.cell
 def study_train(
-    ae_stage, geometries, image_set, load, mo, model_config, progress_view, store, study_arms, study_button, torch
+    ae_stage, geometries, image_set, mo, model_config, progress_view, store, study_arms, study_button, torch
 ):
     import gc as _gc
+
+    from lpap.runtime.config import load as _load  # fresh after --hot (the session cell keeps the old one)
 
     mo.stop(not study_button.value, mo.md("_Press **Run study**. Interrupt the kernel to save and stop._"))
     study_results = {}
     for _arm in study_arms:
-        _config = load(ae_stage.AEStageConfig, "ae", _arm.overrides)
+        _config = _load(ae_stage.AEStageConfig, "ae", _arm.overrides)
         _result = ae_stage.train(
             model_config, _config, geometries, image_set, store, progress_view(_arm.run), name=_arm.run
         )
