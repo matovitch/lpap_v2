@@ -20,7 +20,16 @@ from lpap.data import ImageSet
 from lpap.flow import integrate
 from lpap.gallery import energy_tiles, grid, image_tiles, write_png
 from lpap.geometry import PairGeometry
-from lpap.losses import accuracies, image_l2, normalized_entropy, probe_ce, signed_mass, surrogate_ce, usage_kl
+from lpap.losses import (
+    accuracies,
+    centered_cosine,
+    image_l2,
+    normalized_entropy,
+    probe_ce,
+    signed_mass,
+    surrogate_ce,
+    usage_kl,
+)
 from lpap.lpap import exact_code
 from lpap.runtime import checkpoint
 from lpap.runtime.config import ModelConfig, to_dict
@@ -44,6 +53,24 @@ class SideTerms:
 
 
 @dataclass(frozen=True)
+class Explore:
+    """Exploration knobs (EXPERIMENTS.md). Defaults (0, 0, None) = the plain AE.
+
+    Annealed relative noise: training only, ``x̃ = x + σ(step)·rms(x).detach()·ε`` feeds LPAP and the
+    renderer for every pair; ``σ`` decays linearly from ``noise_sigma`` to 0 over ``noise_decay_steps``.
+    """
+
+    noise_sigma: float
+    noise_decay_steps: int
+    encoder_steps: int | None  # None: ``integration_steps``; the renderer always uses ``integration_steps``
+
+    def sigma(self, step: int) -> float:
+        if self.noise_sigma <= 0 or self.noise_decay_steps <= 0:
+            return 0.0
+        return self.noise_sigma * max(0.0, 1.0 - step / self.noise_decay_steps)
+
+
+@dataclass(frozen=True)
 class AEStageConfig:
     seed: int
     batch_size: int
@@ -60,6 +87,7 @@ class AEStageConfig:
     signed_mass_tau: float
     surrogate_gradient: bool
     side: SideTerms
+    explore: Explore
     validation_batch_size: int
     validation_batch_count: int
     gallery_count: int
@@ -121,12 +149,25 @@ class AETask:
         self.generator = torch.Generator().manual_seed(config.seed)
         self.step = 0
         self.validation_images = images.validation_batches(config.validation_batch_size, config.validation_batch_count)
+        self.stage1_energies = self._stage1_energies(model, store)
+
+    @torch.no_grad()
+    def _stage1_energies(self, model: ModelConfig, store: ArtifactStore) -> list[torch.Tensor]:
+        """Validation energies of the frozen stage-1 flow (fixed reference for ``stage1_corr``)."""
+        field = load_field(model, store, self.device).eval()
+        steps = self.config.integration_steps
+        energies = [
+            integrate(field, image, t0=-1.0, t1=0.0, steps=steps, bf16=self.config.bf16).squeeze(1).float()
+            for image in self.validation_images
+        ]
+        del field
+        return energies
 
     def _autocast(self) -> torch.autocast:
         return torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.config.bf16)
 
     def _encode(self, image: torch.Tensor) -> torch.Tensor:
-        steps = self.config.integration_steps
+        steps = self.config.explore.encoder_steps or self.config.integration_steps
         return integrate(self.run_encoder, image, t0=-1.0, t1=0.0, steps=steps, bf16=self.config.bf16).squeeze(1)
 
     def _render(self, decoded: list[torch.Tensor]) -> list[torch.Tensor]:
@@ -197,18 +238,25 @@ class AETask:
         return decoded, terms, side
 
     def _forward(
-        self, image: torch.Tensor, *, train: bool
+        self, image: torch.Tensor, *, train: bool, noise: float = 0.0
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor], list, dict[str, torch.Tensor]]:
-        """``metrics["loss"]`` is the main objective (§4.6); side terms come back live, mean over lossy pairs."""
+        """``metrics["loss"]`` is the main objective (§4.6); side terms come back live, mean over lossy pairs.
+
+        ``noise``: relative σ of the exploration noise on the energy seen by LPAP and the renderer.
+        """
         config = self.config
         energy = self._encode(image)
+        seen = energy
+        if noise > 0:
+            rms = energy.detach().square().mean(-1, keepdim=True).sqrt()
+            seen = energy + noise * rms * torch.randn_like(energy)
         decoded, metrics = [], {}
         pair_sides: list[dict[str, torch.Tensor]] = []
         for name, geometry in self.geometries.items():
             if geometry.is_lossless:
-                decoded.append(energy)
+                decoded.append(seen)
                 continue
-            pair_decoded, terms, pair_side = self._lossy(name, energy, train=train)
+            pair_decoded, terms, pair_side = self._lossy(name, seen, train=train)
             decoded.append(pair_decoded)
             pair_sides.append(pair_side)
             metrics.update({f"{key}_{name}": value for key, value in terms.items()})
@@ -245,7 +293,8 @@ class AETask:
         for group in self.optimizer.param_groups:
             group["lr"] = rate
         image = self.images.sample_train(self.config.batch_size, self.generator)
-        _, metrics, _, side = self._forward(image, train=True)
+        noise = self.config.explore.sigma(self.step)
+        _, metrics, _, side = self._forward(image, train=True, noise=noise)
         self.optimizer.zero_grad(set_to_none=True)
         # Side terms reach the encoder only by construction (§4.7), so one backward serves both.
         side_loss = self._side_loss(side)
@@ -256,15 +305,21 @@ class AETask:
         grad_norm = torch.nn.utils.clip_grad_norm_(self.modules.parameters(), self.config.max_grad_norm)
         self.optimizer.step()
         self.step += 1
-        return {**{name: value.detach() for name, value in metrics.items()}, "grad_norm": grad_norm, "lr": rate}
+        return {
+            **{name: value.detach() for name, value in metrics.items()},
+            "grad_norm": grad_norm,
+            "lr": rate,
+            "noise_sigma": noise,
+        }
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
         """Fixed validation images. ``kept_share_<pair>``: share of ``‖x‖²`` the exact code keeps."""
         self.modules.eval()
         totals: dict[str, float] = {}
-        for image in self.validation_images:
+        for image, reference in zip(self.validation_images, self.stage1_energies, strict=True):
             energy, metrics, _, _ = self._forward(image, train=False)
+            metrics["stage1_corr"] = centered_cosine(energy.float(), reference).mean()
             metrics["energy_mean"] = energy.mean()
             metrics["energy_std"] = energy.std()
             metrics["energy_top10"] = top_share(energy, 0.1)

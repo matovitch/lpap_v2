@@ -87,6 +87,16 @@ def test_resume_drops_log_rows_after_the_checkpoint(tmp_path):
     assert steps == list(range(1, 8))
 
 
+def test_stop_at_pauses_and_a_later_rung_resumes(tmp_path):
+    store = ArtifactStore(tmp_path, None)
+    first = run(CountingTask(), run="r", config={}, run_config=config(stop_at=12), store=store)
+    assert (first.step, first.reason) == (12, "stop_at")
+    validated = [step for step, _ in read_series(store.local("r", LOG), "validation", "loss")]
+    assert validated == [5, 10, 12]
+    second = run(CountingTask(), run="r", config={}, run_config=config(), store=store)
+    assert (second.step, second.reason) == (20, "target")
+
+
 def test_budget_stops_the_run(tmp_path):
     result = run(
         CountingTask(), run="r", config={}, run_config=config(budget_minutes=0.0), store=ArtifactStore(tmp_path, None)

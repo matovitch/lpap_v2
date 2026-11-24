@@ -418,5 +418,52 @@ def ae_train(ae_button, ae_cfg, ae_stage, geometries, image_set, mo, model_confi
     return (ae_result,)
 
 
+@app.cell
+def study_config(mo):
+    from lpap import experiments
+
+    study_name = "s1"
+    study_arms = experiments.STUDIES[study_name]
+    study_button = mo.ui.run_button(label=f"Run study {study_name}")
+    mo.vstack(
+        [
+            mo.md(f"""
+    ## Experiments (EXPERIMENTS.md)
+
+    Study `{study_name}`: {len(study_arms)} fresh AE runs in sequence, each to its rung (`run.stop_at`).
+    Finished arms are skipped (resume at target). Interrupt = save the current arm and stop the queue.
+    """),
+            mo.ui.table([{"run": arm.run, **arm.overrides} for arm in study_arms], selection=None),
+            study_button,
+        ]
+    )
+    return study_arms, study_button
+
+
+@app.cell
+def study_train(
+    ae_stage, geometries, image_set, load, mo, model_config, progress_view, store, study_arms, study_button
+):
+    import gc
+
+    import torch
+
+    mo.stop(not study_button.value, mo.md("_Press **Run study**. Interrupt the kernel to save and stop._"))
+    study_results = {}
+    for _arm in study_arms:
+        _config = load(ae_stage.AEStageConfig, "ae", _arm.overrides)
+        _result = ae_stage.train(
+            model_config, _config, geometries, image_set, store, progress_view(_arm.run), name=_arm.run
+        )
+        study_results[_arm.run] = (_result.step, _result.reason, _result.best)
+        torch._dynamo.reset()
+        gc.collect()
+        torch.cuda.empty_cache()
+        if _result.reason in ("interrupt", "budget"):
+            break
+    study_results
+    return (study_results,)
+
+
 if __name__ == "__main__":
     app.run()

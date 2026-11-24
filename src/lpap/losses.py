@@ -65,6 +65,13 @@ def normalized_entropy(counts: Float[torch.Tensor, " n"]) -> torch.Tensor:
     return -(share * share.clamp_min(WEIGHT_EPS).log()).sum() / math.log(share.numel())
 
 
+def centered_cosine(a: Float[torch.Tensor, "batch n"], b: Float[torch.Tensor, "batch n"]) -> torch.Tensor:
+    """Per-row Pearson correlation of ``a`` and ``b``."""
+    a = a - a.mean(-1, keepdim=True)
+    b = b - b.mean(-1, keepdim=True)
+    return (a * b).sum(-1) / (a.norm(dim=-1) * b.norm(dim=-1)).clamp_min(WEIGHT_EPS)
+
+
 def sample_bridge_time(
     batch: int,
     *,

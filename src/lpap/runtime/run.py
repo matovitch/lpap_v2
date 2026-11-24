@@ -38,6 +38,12 @@ class RunConfig:
     validate_every: int
     checkpoint_every: int
     upload_every: int
+    # Pause point (successive halving): stop here but keep the ``steps`` LR schedule; raise it to resume.
+    stop_at: int | None = None
+
+    @property
+    def target(self) -> int:
+        return self.steps if self.stop_at is None else min(self.steps, self.stop_at)
 
 
 class Task(Protocol):
@@ -93,7 +99,7 @@ def run(
         step, best = state["step"], state["best"]
         store.fetch(run, LOG)
     log = MetricLog(store.local(run, LOG), start_step=step, config=config)
-    status = _Status(store.root / STATUS, run=run, target=run_config.steps)
+    status = _Status(store.root / STATUS, run=run, target=run_config.target)
 
     def save_last() -> None:
         payload = {
@@ -109,7 +115,7 @@ def run(
         payload = {"weights": task.weights(), "step": step, "value": value, "config": dict(config)}
         checkpoint.save(payload, store.local(run, BEST))
 
-    reason = "target"
+    reason = "target" if run_config.target == run_config.steps else "stop_at"
     gallery = getattr(task, "gallery", None)
     # Per-metric counts: tasks may report a metric only on some steps.
     window: dict[str, torch.Tensor | float] = {}
@@ -119,7 +125,7 @@ def run(
     best_dirty = False
     try:
         status.write("running", step, {})
-        while step < run_config.steps:
+        while step < run_config.target:
             if time.monotonic() - started > 60.0 * run_config.budget_minutes:
                 reason = "budget"
                 break
@@ -137,7 +143,7 @@ def run(
                 status.write("running", step, train_metrics)
                 if progress:
                     progress({"step": step, "target": run_config.steps, "train": train_metrics, "best": best})
-            if step % run_config.validate_every == 0 or step == run_config.steps:
+            if step % run_config.validate_every == 0 or step == run_config.target:
                 validation = dict(task.validate())
                 log.write(step, "validation", validation)
                 if validation[task.best_metric] < best:

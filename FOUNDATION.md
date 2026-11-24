@@ -599,4 +599,5 @@ Parking lot (not in the first version):
 - Exploring beyond the image-aligned start (AE step 17k: energy is a local,
   one-scale concentration of the image). Candidates: more encoder flow steps;
   annealed noise on the energy before LPAP. Rejected: a fixed wavelet basis
-  (not signal-agnostic, §0).
+  (not signal-agnostic, §0). Now studied in [EXPERIMENTS.md](EXPERIMENTS.md)
+  (S1 noise, S3 encoder steps × noise); knobs in `ae.toml` `[explore]`, off by default.

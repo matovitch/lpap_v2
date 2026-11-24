@@ -23,6 +23,12 @@ residual_share = 0.0         # 1 − kept_share: the energy LPAP drops
 probe_ce_live = 0.0          # probe CE through live (a, w): make the code decodable
 usage_kl = 0.0               # KL(per-coordinate power ‖ uniform): anti fixed-support collapse
 
+# Exploration knobs (EXPERIMENTS.md); these defaults = plain AE.
+[explore]
+noise_sigma = 0.0            # σ0 of the annealed relative noise on the energy (training only)
+noise_decay_steps = 0        # σ decays linearly from σ0 to 0 over these steps
+# encoder_steps = 8          # omitted: integration_steps; the renderer keeps integration_steps
+
 [run]
 steps = 35000
 budget_minutes = 600

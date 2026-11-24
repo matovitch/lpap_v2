@@ -130,6 +130,17 @@ def test_ae_stage_trains_with_routed_gradients(tmp_path):
         "probe_ce_live": {"encoder", "decoders"},
     }
 
+    # Fresh encoder = stage-1 flow, so the exploration metric starts at 1.
+    assert abs(task.validate()["stage1_corr"] - 1.0) < 1e-4
+
+    # Exploration noise changes what LPAP and the renderer see, not the energy itself.
+    sample = images.sample_train(4, torch.Generator().manual_seed(0))
+    with torch.no_grad():
+        clean_energy, clean, _, _ = task._forward(sample, train=True)
+        noisy_energy, noisy, _, _ = task._forward(sample, train=True, noise=0.5)
+    assert torch.equal(clean_energy, noisy_energy)
+    assert not torch.equal(clean["image_l2_lossless"], noisy["image_l2_lossless"])
+
     result = ae.train(model, config, geometries, images, store)
     assert (result.step, result.reason) == (2, "target")
     assert {"image_l2", "image_l2_lossless", "kept_share_c512_k32", "probe_accuracy_c512_k32"} <= set(

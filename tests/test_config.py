@@ -1,6 +1,6 @@
 import pytest
 
-from lpap.runtime.config import ConfigError, ModelConfig, from_dict, load_model, load_storage, to_dict
+from lpap.runtime.config import ConfigError, ModelConfig, from_dict, load, load_model, load_storage, to_dict
 
 
 def test_model_config_loads():
@@ -19,6 +19,17 @@ def test_overrides():
     assert load_model({"flow.width": 64}).flow.width == 64
     with pytest.raises(ConfigError):
         load_model({"flow.typo": 1})
+
+
+def test_every_experiment_arm_loads():
+    from lpap.experiments import STUDIES
+    from lpap.stages.ae import AEStageConfig
+
+    for arms in STUDIES.values():
+        assert len({arm.run for arm in arms}) == len(arms)
+        for arm in arms:
+            config = load(AEStageConfig, "ae", arm.overrides)
+            assert config.run.target <= config.run.steps
 
 
 def test_strictness():

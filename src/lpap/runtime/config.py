@@ -107,6 +107,7 @@ def from_dict(cls: type[T], data: Any, path: str = "") -> T:
 
 
 def apply_overrides(data: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Set dotted keys. New leaves are allowed (optional fields absent from the TOML); ``from_dict`` rejects typos."""
     for dotted, value in overrides.items():
         *parents, leaf = dotted.split(".")
         table = data
@@ -114,8 +115,6 @@ def apply_overrides(data: dict[str, Any], overrides: dict[str, Any]) -> dict[str
             if not isinstance(table.get(key), dict):
                 raise ConfigError(f"{dotted}: no table {key!r}")
             table = table[key]
-        if leaf not in table:
-            raise ConfigError(f"{dotted}: unknown key")
         table[leaf] = value
     return data
 
