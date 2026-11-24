@@ -64,7 +64,14 @@ fixed at 2.5k, so every arm has 2.5k noise-free steps before rung 1.
   for the finalists.
 - If no arm separates at 15k, S1 is negative for 4 steps. Record it, then run S3 before discarding noise.
 
-**Results.** _pending_
+**Results.** _pending (rung 1 needs both seeds)._
+
+*Interim check, 14:15, seed 2987 only (control, σ0 0.3, σ0 1 done):*
+- **Sanity checks pass:** `noise_sigma` decays linearly to 0 at 2,500, each arm has the right config, there was one session per run (no restarts) and `grad_norm` is unremarkable.
+- **Validation `image_l2` at 5k:** 0.01104 / 0.01095 / 0.01092. The gaps are under 1%, which is probably within the seed spread.
+- **σ0 1:** it was far behind at 2.5k (0.0141 vs 0.0126) and caught up by 5k, so its curve is still steeper. It also has the best c512 L2 (0.00553 vs 0.00569) and probe weighted accuracy (c128: 0.55 vs 0.47). This trend makes it the arm to watch at 15k.
+- **H1:** `stage1_corr` is not monotone in σ0. At 5k, σ0 1 is the *highest* (0.59 vs 0.53 control).
+- **Measurement caveat for H3:** `gather_area` uses only 4 images × 16 sites and jumps by about 30% between validations (σ0 0.3: 23.8 → 36.6). It cannot settle H3 as it stands. Plan: recompute it offline on the rung checkpoints with more images and sites, and report the median as well as the mean. The live metric is kept unchanged during S1 so all arms are measured the same way.
 
 ## Planned (not pre-registered yet)
 
