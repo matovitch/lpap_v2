@@ -78,6 +78,11 @@ fixed at 2.5k, so every arm has 2.5k noise-free steps before rung 1.
   (cv 0.4–0.6): coordinates differ, with some gathering more than 2 rows of the image (> 64 samples). σ0 1 is the
   *most uniform* (cv 0.41) and the widest in span (median 18.5 vs 14.5). σ0 0.3 has the heaviest tail. Seed 2988 is
   needed before any H3 reading.
+- *H3-alt (Camille): footprints depend on training progress, not on noise.* Area grows as the AE trains (stage 1
+  is AE step 0), and noise only delays that growth, so the end-state distributions match. Test: compare
+  histograms at 5k and 15k for every arm, and plot area against `image_l2` instead of step. If H3-alt holds, the
+  noise arms at 15k look like the control at 15k and the area-vs-loss curves overlap. The 5k checkpoints are kept
+  locally (`/tmp/s1/ckpt5k`) because resuming to 15k overwrites `last.pt`.
 
 ## Planned (not pre-registered yet)
 
