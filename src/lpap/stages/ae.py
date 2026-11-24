@@ -53,8 +53,16 @@ def gather_footprint(
     ``span`` = ``J_i²``-weighted rms distance to ``i`` along the 1-D signal. Means over images and probed sites
     (``sites`` evenly spaced coordinates). Signal-agnostic: only the flattened order is used.
     """
-    batch, _, n = image.shape
+    n = image.shape[-1]
     coords = torch.arange(sites, device=image.device) * (n // sites) + n // (2 * sites)
+    area, span = footprint_sites(encode, image, coords)
+    return area.mean(), span.mean()
+
+
+def footprint_sites(encode: Any, image: torch.Tensor, coords: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-(image, site) ``area`` and ``span`` of :func:`gather_footprint`, shape ``(batch · len(coords),)``."""
+    batch, _, n = image.shape
+    sites = len(coords)
     inputs = image.repeat_interleave(sites, 0).detach().requires_grad_(True)
     with torch.enable_grad():
         energy = encode(inputs)
@@ -65,7 +73,7 @@ def gather_footprint(
     area = rows.sum(-1).square() / power.sum(-1).clamp_min(1e-30)
     offset = torch.arange(n, device=image.device)[None, :] - coords.repeat(batch)[:, None]
     span = ((power * offset.square()).sum(-1) / power.sum(-1).clamp_min(1e-30)).sqrt()
-    return area.mean(), span.mean()
+    return area, span
 
 
 @dataclass(frozen=True)

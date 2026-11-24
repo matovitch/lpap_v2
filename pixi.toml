@@ -25,6 +25,7 @@ ruff = ">=0.17.6,<0.18"
 cuda-driver-dev = ">=12.9,<13"
 cuda-cudart-dev = ">=12.9,<13"
 cuda-nvcc = ">=12.9,<13"
+matplotlib = ">=3.11.2,<4"
 
 [pypi-dependencies]
 lpap = { path = ".", editable = true }
