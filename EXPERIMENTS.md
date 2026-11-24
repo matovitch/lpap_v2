@@ -67,7 +67,32 @@ fixed at 2.5k, so every arm has 2.5k noise-free steps before rung 1.
   for the finalists.
 - If no arm separates at 15k, S1 is negative for 4 steps. Record it, then run S3 before discarding noise.
 
-**Results.** _pending (rung 1 needs both seeds)._
+**Results, rung 1 (5k, 2 seeds, 16:25).** Mean ± half the seed gap. There were no restarts in any of the 8 runs.
+
+| σ0 | image_l2 ×1e3 | c128 | c512 | lossless | kept c128 | probe acc c128 | stage1_corr | 4k→5k slope |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 10.98 ± 0.06 | 23.08 | 5.65 | 0.99 | 0.755 | 0.486 | 0.51 | −4.7% |
+| 0.1 | **10.75 ± 0.07** | 22.59 | 5.51 | 0.92 | 0.757 | 0.487 | 0.52 | −4.5% |
+| 0.3 | **10.76 ± 0.19** | 22.55 | 5.50 | 1.06 | 0.745 | 0.498 | 0.49 | −3.7% |
+| 1 | 11.09 ± 0.17 | 23.21 | 5.56 | 1.53 | 0.689 | **0.540** | 0.60 | **−8.0%** |
+
+- **H2 (weak positive):** σ0 0.1 and 0.3 are about 2% below control at every pair. That is beyond the control
+  seed spread (±0.6%) but small in size. σ0 1 is behind (by about 1%, within its spread) and still descending
+  twice as fast: it trades early loss for something not yet visible.
+- **H1 rejected as stated:** `stage1_corr` is not monotone in σ0. σ0 1 stays *closest* to stage 1 (0.60). Strong
+  early noise seems to slow the drift away from stage 1, not speed it up.
+- **σ0 1 is a different regime:** it has the lowest kept_share c128 (0.69 vs 0.76, i.e. less concentration) but the
+  best probe accuracy (0.54). Its energy is more spread yet more predictable.
+- **Footprints (offline, 64 images × 128 sites, `footprints_s1_all.png`):** area medians are 21–25 for control,
+  22–28 for σ0 0.1, 25–29 for σ0 0.3 and 20.5–22 for σ0 1. The seed spread within an arm is as large as the gaps
+  between arms, so **H3 is not supported at 5k**. σ0 1 is the clear outlier in *shape*: it is the most uniform
+  (cv 0.41–0.46 vs 0.51–0.61), has the widest span (median 18.5–19.5 vs 13–21) and few small patches (p10 13–14.5).
+  Both seeds agree, so this is a real effect of strong noise. Whether it persists or is only lag is H3-alt's question at 15k.
+- **Decision (pre-registered rule):** no arm is worse than control beyond the seed spread, so **all 4 arms go to
+  15k**. That is about 4h per seed batch, run as studies `s1-r2-s2988` then `s1-r2-s2987` in separate molab
+  sessions with a break between. Seed 2989 is added only for the finalists after 15k.
+
+*Earlier interim notes (kept for the record):*
 
 *Interim check, 14:15, seed 2987 only (control, σ0 0.3, σ0 1 done):*
 - **Sanity checks pass:** `noise_sigma` decays linearly to 0 at 2,500, each arm has the right config, there was one session per run (no restarts) and `grad_norm` is unremarkable.

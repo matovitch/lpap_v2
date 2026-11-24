@@ -35,4 +35,10 @@ def _noise_arm(study: str, sigma: float, seed: int, stop_at: int, decay: int = 2
 # Rung 1 = 5k steps; seed-major order so a partial queue still covers every arm once.
 S1 = [_noise_arm("s1", sigma, seed, stop_at=5000) for seed in SEEDS[:2] for sigma in (0.0, 0.3, 1.0, 0.1)]
 
-STUDIES: dict[str, list[Arm]] = {"s1": S1}
+# Rung 2 = 15k for every arm (none worse than control beyond the seed spread at 5k). One seed per molab
+# session (≈ 4 h each): resumes each run from its 5k ``last.pt`` on HF.
+S1_R2 = {
+    seed: [_noise_arm("s1", sigma, seed, stop_at=15000) for sigma in (0.0, 0.1, 0.3, 1.0)] for seed in SEEDS[:2]
+}
+
+STUDIES: dict[str, list[Arm]] = {"s1": S1, "s1-r2-s2988": S1_R2[2988], "s1-r2-s2987": S1_R2[2987]}

@@ -422,7 +422,7 @@ def ae_train(ae_button, ae_cfg, ae_stage, geometries, image_set, mo, model_confi
 def study_config(mo):
     from lpap import experiments
 
-    study_name = "s1"
+    study_name = "s1-r2-s2988"
     study_arms = experiments.STUDIES[study_name]
     study_button = mo.ui.run_button(label=f"Run study {study_name}")
     mo.vstack(

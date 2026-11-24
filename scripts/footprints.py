@@ -1,6 +1,6 @@
 """Distribution of encoder gathering footprints (per energy coordinate), from saved AE checkpoints.
 
-Usage: pixi run python scripts/footprints.py OUT.png RUN[:FILE] ...   (FILE defaults to last.pt)
+Usage: pixi run python scripts/footprints.py OUT.png (RUN[:FILE] | PATH.pt) ...   (FILE defaults to last.pt)
 Each (image, site) gives one ``area`` (participation ratio of the Jacobian row, ≈ input samples used) and one
 ``span`` (rms distance along the 1-D signal). The stage-1 flow is included as reference. fp32, no compile.
 """
@@ -61,8 +61,11 @@ def main(out: Path, specs: list[str]) -> None:
     results = {"stage 1": sites(lambda x: integrate(stage1, x, t0=-1.0, t1=0.0, steps=steps).squeeze(1), images)}
     del stage1
     for spec in specs:
-        run, _, filename = spec.partition(":")
-        state = checkpoint.load(store.fetch(run, filename or "last.pt"))
+        if spec.endswith(".pt"):  # local checkpoint file
+            run, state = Path(spec).stem, checkpoint.load(Path(spec))
+        else:
+            run, _, filename = spec.partition(":")
+            state = checkpoint.load(store.fetch(run, filename or "last.pt"))
         weights = state["weights"] if "weights" in state else state["task"]
         task.modules.load_state_dict(weights["modules"])
         task.modules.eval()
