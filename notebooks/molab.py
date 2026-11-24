@@ -442,11 +442,9 @@ def study_config(mo):
 
 @app.cell
 def study_train(
-    ae_stage, geometries, image_set, load, mo, model_config, progress_view, store, study_arms, study_button
+    ae_stage, geometries, image_set, load, mo, model_config, progress_view, store, study_arms, study_button, torch
 ):
-    import gc
-
-    import torch
+    import gc as _gc
 
     mo.stop(not study_button.value, mo.md("_Press **Run study**. Interrupt the kernel to save and stop._"))
     study_results = {}
@@ -457,7 +455,7 @@ def study_train(
         )
         study_results[_arm.run] = (_result.step, _result.reason, _result.best)
         torch._dynamo.reset()
-        gc.collect()
+        _gc.collect()
         torch.cuda.empty_cache()
         if _result.reason in ("interrupt", "budget"):
             break
