@@ -84,6 +84,10 @@ fixed at 2.5k, so every arm has 2.5k noise-free steps before rung 1.
   noise arms at 15k look like the control at 15k and the area-vs-loss curves overlap. The 5k checkpoints are kept
   locally (`/tmp/s1/ckpt5k`) because resuming to 15k overwrites `last.pt`.
 
+*Interim check, 15:40, 6 of 8 arms at 5k:* validation `image_l2` is 0.01104 / 0.01092 for the control (seed spread
+≈ 1%), 0.01095 / 0.01058 for σ0 0.3 (mean 2% below control), 0.01082 for σ0 0.1, and 0.01092 for σ0 1. Every arm is
+within about 2× the seed spread, with no outlier and no restart. σ0 0.3 leads weakly, and σ0 1 keeps the best probe accuracy.
+
 ## Planned (not pre-registered yet)
 
 - **S2: noise schedule.** Only if S1 shows an effect: decay length (1k / 2.5k / 7.5k) at the best σ0.
