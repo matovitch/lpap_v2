@@ -25,9 +25,11 @@ EOF
 
 misses=0
 while true; do
-    status=$("$here/status.sh" --json 2>/dev/null)
+    # molab file API can take 30s+ under load; a short timeout turns slowness into false alarms
+    status=$(MOLAB_HTTP_TIMEOUT=${MOLAB_HTTP_TIMEOUT:-60} "$here/status.sh" --json 2>/dev/null)
     if [ -z "$status" ]; then
         misses=$((misses + 1))
+        echo "$(date +%H:%M) no status (miss $misses)"
         if [ "$misses" -ge 6 ]; then
             notify "lpap watch: molab unreachable" "status.sh failed $misses times; session may be gone."
             echo "unreachable"; exit 2

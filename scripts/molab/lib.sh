@@ -15,7 +15,7 @@ molab_require_env() {
 
 # Read a file of the molab box through the server file API: never touches the kernel.
 molab_read_file() {
-  curl -sf -m 15 -X POST "${MOLAB_URL%/}/api/files/file_details" \
+  curl -sf -m "${MOLAB_HTTP_TIMEOUT:-15}" -X POST "${MOLAB_URL%/}/api/files/file_details" \
     -H "Authorization: Bearer ${MOLAB_TOKEN}" -H "Content-Type: application/json" \
     -d "$(jq -n --arg p "$1" '{path: $p}')" | jq -er '.contents // empty'
 }
