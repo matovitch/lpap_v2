@@ -41,6 +41,31 @@ from lpap.stages.flow import learning_rate, load_field, top_share
 
 RUN = "ae"
 GROUPS = ("encoder", "renderer", "surrogates", "decoders")
+FOOTPRINT_SITES = 16  # energy coordinates probed per image for the gathering footprint
+
+
+def gather_footprint(
+    encode: Any, image: torch.Tensor, sites: int = FOOTPRINT_SITES
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Which inputs each energy coordinate gathers from: rows ``J_i = ∂x_i/∂input`` of the encoder Jacobian.
+
+    ``area`` = participation ratio ``(Σ|J_i|)² / Σ J_i²`` (≈ number of input samples used; 1 = a single one);
+    ``span`` = ``J_i²``-weighted rms distance to ``i`` along the 1-D signal. Means over images and probed sites
+    (``sites`` evenly spaced coordinates). Signal-agnostic: only the flattened order is used.
+    """
+    batch, _, n = image.shape
+    coords = torch.arange(sites, device=image.device) * (n // sites) + n // (2 * sites)
+    inputs = image.repeat_interleave(sites, 0).detach().requires_grad_(True)
+    with torch.enable_grad():
+        energy = encode(inputs)
+        picked = energy.gather(1, coords.repeat(batch)[:, None]).sum()
+        (jacobian,) = torch.autograd.grad(picked, inputs)
+    rows = jacobian.squeeze(1).float().abs()
+    power = rows.square()
+    area = rows.sum(-1).square() / power.sum(-1).clamp_min(1e-30)
+    offset = torch.arange(n, device=image.device)[None, :] - coords.repeat(batch)[:, None]
+    span = ((power * offset.square()).sum(-1) / power.sum(-1).clamp_min(1e-30)).sqrt()
+    return area.mean(), span.mean()
 
 
 @dataclass(frozen=True)
@@ -149,19 +174,26 @@ class AETask:
         self.generator = torch.Generator().manual_seed(config.seed)
         self.step = 0
         self.validation_images = images.validation_batches(config.validation_batch_size, config.validation_batch_count)
-        self.stage1_energies = self._stage1_energies(model, store)
+        self.stage1_energies, self.stage1_footprint = self._stage1_reference(model, store)
 
-    @torch.no_grad()
-    def _stage1_energies(self, model: ModelConfig, store: ArtifactStore) -> list[torch.Tensor]:
-        """Validation energies of the frozen stage-1 flow (fixed reference for ``stage1_corr``)."""
+    def _footprint_images(self) -> torch.Tensor:
+        return self.validation_images[0][:4]
+
+    def _stage1_reference(
+        self, model: ModelConfig, store: ArtifactStore
+    ) -> tuple[list[torch.Tensor], dict[str, float]]:
+        """Frozen stage-1 flow on the validation images: energies for ``stage1_corr`` and its gathering footprint."""
         field = load_field(model, store, self.device).eval()
         steps = self.config.integration_steps
-        energies = [
-            integrate(field, image, t0=-1.0, t1=0.0, steps=steps, bf16=self.config.bf16).squeeze(1).float()
-            for image in self.validation_images
-        ]
+
+        def encode(image: torch.Tensor) -> torch.Tensor:
+            return integrate(field, image, t0=-1.0, t1=0.0, steps=steps, bf16=False).squeeze(1)
+
+        with torch.no_grad():
+            energies = [encode(image).float() for image in self.validation_images]
+        area, span = gather_footprint(encode, self._footprint_images())
         del field
-        return energies
+        return energies, {"gather_area_stage1": float(area), "gather_span_stage1": float(span)}
 
     def _autocast(self) -> torch.autocast:
         return torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.config.bf16)
@@ -326,7 +358,18 @@ class AETask:
             for name, value in metrics.items():
                 totals[name] = totals.get(name, 0.0) + float(value) / len(self.validation_images)
         totals.update(self.gradient_norms(self.validation_images[0]))
+        totals.update(self.footprint())
         return totals
+
+    def footprint(self) -> dict[str, float]:
+        """Gathering footprint of the live encoder (eager, fp32) next to its stage-1 reference."""
+        steps = self.config.explore.encoder_steps or self.config.integration_steps
+
+        def encode(image: torch.Tensor) -> torch.Tensor:
+            return integrate(self.encoder, image, t0=-1.0, t1=0.0, steps=steps, bf16=False).squeeze(1)
+
+        area, span = gather_footprint(encode, self._footprint_images())
+        return {"gather_area": float(area), "gather_span": float(span), **self.stage1_footprint}
 
     def gradient_norms(self, image: torch.Tensor) -> dict[str, float]:
         """``grad_<term>_<module>``: ‖∂term/∂θ_module‖ of each unweighted term, as routed (§3.6, §4.7).

@@ -131,7 +131,9 @@ def test_ae_stage_trains_with_routed_gradients(tmp_path):
     }
 
     # Fresh encoder = stage-1 flow, so the exploration metric starts at 1.
-    assert abs(task.validate()["stage1_corr"] - 1.0) < 1e-4
+    validation = task.validate()
+    assert abs(validation["stage1_corr"] - 1.0) < 1e-4
+    assert abs(validation["gather_area"] - validation["gather_area_stage1"]) < 1e-3
 
     # Exploration noise changes what LPAP and the renderer see, not the energy itself.
     sample = images.sample_train(4, torch.Generator().manual_seed(0))
@@ -162,3 +164,12 @@ def test_enabled_side_terms_train_the_encoder_only(tmp_path):
     task._side_loss(terms).backward()
     touched = {name for name, module in task.modules.items() if any(p.grad is not None for p in module.parameters())}
     assert touched == {"encoder"}
+
+
+def test_gather_footprint_of_known_encoders():
+    image = torch.rand(2, 1, 64)
+    area, span = ae.gather_footprint(lambda x: 2.0 * x.squeeze(1), image, sites=4)
+    assert torch.allclose(area, torch.tensor(1.0)) and torch.allclose(span, torch.tensor(0.0))
+    box = torch.ones(1, 1, 3)
+    area, span = ae.gather_footprint(lambda x: torch.nn.functional.conv1d(x, box, padding=1).squeeze(1), image, sites=4)
+    assert torch.allclose(area, torch.tensor(3.0)) and torch.allclose(span, torch.tensor((2 / 3) ** 0.5))

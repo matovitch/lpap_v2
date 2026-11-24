@@ -19,6 +19,13 @@ results are appended, never rewritten. Negative results stay.
   - compressibility: `kept_share_<pair>`, `probe_weighted_accuracy_<pair>`;
   - geometry: `stage1_corr` (Pearson correlation of the energy with the frozen stage-1 energy; 1 = has not
     moved), `support_entropy_<pair>`, `usage_kl`, `energy_top10`;
+  - gathering footprint (Jacobian rows `∂x_i/∂input`, 16 sites × 4 validation images):
+    - `gather_area` = participation ratio, about the number of input samples one energy coordinate uses;
+    - `gather_span` = rms distance of those inputs along the 1-D signal;
+    - `*_stage1` = the frozen stage-1 values, as reference.
+
+    It tests whether the encoder learns local, JPEG-like transforms of patches (area > 1) and whether those
+    patches grow;
   - routing: `grad_<term>_<module>`.
 - **Compute**: about 2 steps/s at batch 64 (H100-class, molab), so a 5k rung takes about 45 min per arm.
   molab is free: when in doubt, add seeds rather than guess.
@@ -48,6 +55,9 @@ fixed at 2.5k, so every arm has 2.5k noise-free steps before rung 1.
   at c128 (largest drop).
 - H0 (null): the gap closes after the decay. That would mean the basin is not the bottleneck (or 4 steps
   cannot express a different one; see S3).
+- H3 (Camille): if a global basis is out of reach in this landscape, the encoder may still find a local one,
+  like JPEG's per-tile DCT. More noise then makes the patches grow: `gather_area` / `gather_span` increase
+  with σ0, and larger patches go with better c128 (the strongest compression).
 
 **Decision rule.**
 - Promote control and every σ0 arm not worse than control beyond the seed spread to 15k, and add seed 2989
