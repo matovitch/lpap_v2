@@ -27,8 +27,11 @@ results are appended, never rewritten. Negative results stay.
     It tests whether the encoder learns local, JPEG-like transforms of patches (area > 1) and whether those
     patches grow;
   - routing: `grad_<term>_<module>`.
-- **Compute**: about 2 steps/s at batch 64 (H100-class, molab), so a 5k rung takes about 45 min per arm.
+- **Compute**: about 3 steps/s at batch 64 (H100-class, molab), so a 5k rung takes about 25 min per arm.
   molab is free: when in doubt, add seeds rather than guess.
+- **molab etiquette** (an account ban was appealed once): use a fresh session for each long batch, size the
+  batch to finish well before the 12h session limit (target ≤ 6h), leave a break between batches, and never
+  chain a new batch automatically. Debug locally first.
 
 ## Reference: baseline `ae` (35k schedule)
 
