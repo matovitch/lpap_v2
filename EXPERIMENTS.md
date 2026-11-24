@@ -116,6 +116,30 @@ fixed at 2.5k, so every arm has 2.5k noise-free steps before rung 1.
 ≈ 1%), 0.01095 / 0.01058 for σ0 0.3 (mean 2% below control), 0.01082 for σ0 0.1, and 0.01092 for σ0 1. Every arm is
 within about 2× the seed spread, with no outlier and no restart. σ0 0.3 leads weakly, and σ0 1 keeps the best probe accuracy.
 
+*Rung 2 results, seed 2988 at 15k (22:36).* Validation `image_l2` ×1e-3 at 5k / 7.5k / 10k / 12.5k / 15k:
+
+| σ0 | 5k | 7.5k | 10k | 12.5k | 15k | vs control | c128 | c512 | probe wacc c128 | mean abs energy at 15k |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 10.92 | 9.96 | 9.38 | 9.16 | 9.05 | — | 19.04 | 4.64 | 0.595 | 0.23 |
+| 0.1 | 10.68 | 9.63 | 9.12 | 8.88 | 8.75 | −3.3% | 18.28 | 4.56 | 0.626 | 0.23 |
+| 0.3 | 10.58 | 9.56 | 9.13 | 8.83 | 8.70 | −3.9% | 18.37 | 4.43 | 0.619 | 0.32 |
+| 1 | 11.26 | 9.41 | 8.72 | 8.36 | **8.15** | **−10.0%** | 17.74 | **3.78** | **0.655** | 0.69 |
+
+- σ0 1 was the *worst* arm at 5k, passed the control by 7.5k, and its lead keeps growing (−7% at 10k, −9% at 12.5k).
+  A −10% gap is about 3× the 0.1/0.3 gaps, so trajectory luck is a much less plausible reading for this arm.
+  σ0 0.1 and 0.3 remain within what luck might explain.
+- The energy is still inflated at 15k (0.69 vs 0.23), even though the noise ended at 2.5k.
+- Offline footprints (64 images × 128 sites), area mean / median / cv and span median, 5k → 15k:
+  control 30 / 25 / 0.61 → 41 / 33 / 0.60, span 17 → 23; σ0 0.1 32 → 53; σ0 0.3 34 → 51;
+  **σ0 1 23 / 20.5 / 0.46 → 26 / 21 / 0.61, span 19.5 → 14**. The other arms' footprints grow by ~50% with
+  training. σ0 1's stay small and become *more local* (span shrinks), while it has the best loss.
+- **H3-alt (footprint follows convergence) is rejected on this seed:** the best-converged arm has the smallest
+  footprints, so area is not a function of loss. **H5's "more uniform" part does not persist** (cv back to 0.61); what persists is
+  "small, local footprints". The original H3 (noise grows footprints) is also contradicted for σ0 1.
+- Gallery (each run divided by its own rms): the σ0 1 energy is sparse and follows edges, and its c128 survivors sit on object
+  contours. Its c128 renders are made of fewer, larger flat regions that follow object boundaries. The other three arms still look alike.
+- **Gate:** passed (all three arms beat control by more than 1%), so `s1-r2-s2987` runs next. It is the decisive test for σ0 1.
+
 *Observation, 21:05, seed 2988 (not pre-registered): noise inflates the energy.* Train mean |energy| is about
 0.25 in the control throughout. It rises to 0.47 (σ0 0.3) and 1.31 (σ0 1) while the noise is on, then decays
 once σ reaches 0 (σ0 1: 1.03 at 5k). The noise is relative (scaled by a detached rms), so inflating doesn't
