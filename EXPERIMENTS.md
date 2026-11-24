@@ -118,7 +118,12 @@ within about 2× the seed spread, with no outlier and no restart. σ0 0.3 leads 
 
 ## Planned (not pre-registered yet)
 
-- **S2: noise schedule.** Only if S1 shows an effect: decay length (1k / 2.5k / 7.5k) at the best σ0.
+- **S2: long noise (draft, 19:00).** Runs whether or not S1 shows an effect: S1's 2.5k decay ended before the patch
+  structure formed (footprints still growing at 5k), so it only tested *early* noise. Setup: a 20k schedule, judged
+  at 20k, with the decay over 10k. Open question: which σ0. Same σ0 with a 4× longer decay is about 4× more total
+  noise ("dose" ∝ σ0² × decay), so σ0 1 over 10k may be too strong (σ > 0.5 for 5k steps). Candidates: {0.3, 1}
+  (same scales, more dose) vs {0.15, 0.5} (about the same dose as S1's 0.3 / 1). An optional arm: a constant floor
+  σ = 0.1 throughout. Fix after the S1 15k results, before launching.
 - **S3: encoder steps × noise.** A 2 × 2 design (encoder 4 / 8 steps; renderer 4) × (no noise / best or
   middle σ0) to test whether annealing needs a more expressive encoder (interaction).
 - **Learning-rate control.** lr × 3, to tell "stuck" from "slow".
