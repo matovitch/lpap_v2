@@ -91,7 +91,7 @@ def test_ae_stage_trains_with_routed_gradients(tmp_path):
     config = load(ae.AEStageConfig, "ae", overrides)
 
     task = ae.AETask(model, config, geometries, images, store)
-    _, metrics, _ = task._forward(images.sample_train(4, torch.Generator().manual_seed(0)), train=True)
+    _, metrics, _, _ = task._forward(images.sample_train(4, torch.Generator().manual_seed(0)), train=True)
     metrics["loss"].backward()
     grads = {
         name: any(p.grad is not None and p.grad.abs().sum() > 0 for p in module.parameters())
@@ -101,10 +101,34 @@ def test_ae_stage_trains_with_routed_gradients(tmp_path):
 
     # The surrogate is trained by its CE only: the image loss alone leaves its params untouched.
     task.optimizer.zero_grad(set_to_none=True)
-    _, metrics, _ = task._forward(images.sample_train(4, torch.Generator().manual_seed(0)), train=True)
+    _, metrics, _, _ = task._forward(images.sample_train(4, torch.Generator().manual_seed(0)), train=True)
     metrics["image_l2"].backward()
     assert all(p.grad is None for p in task.surrogates.parameters())
     assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in task.encoder.parameters())
+
+    # Measured routing matches §3.6; side terms reach the encoder and nothing they must not.
+    norms = task.gradient_norms(images.sample_train(4, torch.Generator().manual_seed(0)))
+    reached = {
+        term: {key.rsplit("_", 1)[1] for key in norms if key.rsplit("_", 1)[0] == f"grad_{term}"}
+        for term in (
+            "image_l2",
+            "surrogate_ce",
+            "probe_ce",
+            "signed_mass",
+            "residual_share",
+            "usage_kl",
+            "probe_ce_live",
+        )
+    }
+    assert reached == {
+        "image_l2": {"encoder", "renderer", "decoders"},
+        "surrogate_ce": {"surrogates"},
+        "probe_ce": {"decoders"},
+        "signed_mass": {"encoder"},
+        "residual_share": {"encoder"},
+        "usage_kl": {"encoder"},
+        "probe_ce_live": {"encoder", "decoders"},
+    }
 
     result = ae.train(model, config, geometries, images, store)
     assert (result.step, result.reason) == (2, "target")
@@ -112,3 +136,18 @@ def test_ae_stage_trains_with_routed_gradients(tmp_path):
         result.last_validation
     )
     assert (tmp_path / "runs" / ae.RUN / "best.pt").exists()
+
+
+def test_enabled_side_terms_train_the_encoder_only(tmp_path):
+    model = load_model(TINY)
+    geometries = {name: PairGeometry(model.pair(name), model.value_count) for name in ("c512_k32", "lossless")}
+    images = ImageSet(torch.randint(0, 256, (40, 1, 32, 32), dtype=torch.uint8), "cpu")
+    store = ArtifactStore(tmp_path, None)
+    _teachers(model, geometries, images, store)
+    side = {"side.residual_share": 1.0, "side.probe_ce_live": 1.0, "side.usage_kl": 1.0}
+    config = load(ae.AEStageConfig, "ae", {**FAST, "integration_steps": 2, **side})
+    task = ae.AETask(model, config, geometries, images, store)
+    _, _, _, terms = task._forward(images.sample_train(4, torch.Generator().manual_seed(0)), train=True)
+    task._side_loss(terms).backward()
+    touched = {name for name, module in task.modules.items() if any(p.grad is not None for p in module.parameters())}
+    assert touched == {"encoder"}

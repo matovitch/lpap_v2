@@ -35,11 +35,16 @@ def visible_candidates(tokens: Float[torch.Tensor, "batch c p"], k_max: int) -> 
     return rolled.flatten(-2)
 
 
+def frozen_call(module: nn.Module, *args: torch.Tensor) -> torch.Tensor:
+    """``module(*args)`` with inputs live and params detached: gradients pass through without updating it."""
+    params = {name: param.detach() for name, param in module.named_parameters()}
+    buffers = dict(module.named_buffers())
+    return functional_call(module, (params, buffers), args)
+
+
 def surrogate_through(surrogate: nn.Module, tokens: Float[torch.Tensor, "batch c p"]) -> torch.Tensor:
     """Frontend call (§3.4): tokens live, surrogate params detached."""
-    params = {name: param.detach() for name, param in surrogate.named_parameters()}
-    buffers = dict(surrogate.named_buffers())
-    return functional_call(surrogate, (params, buffers), (tokens,))
+    return frozen_call(surrogate, tokens)
 
 
 def frontend(

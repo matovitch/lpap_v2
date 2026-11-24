@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 from jaxtyping import Float, Int
 from torch import nn
@@ -48,6 +50,19 @@ def signed_mass(energy: Float[torch.Tensor, "batch n"], tau: float) -> torch.Ten
     gap = ((positive - negative) / tau).square()
     floor = (F.relu(tau - positive) / tau).square() + (F.relu(tau - negative) / tau).square()
     return gap + floor
+
+
+def usage_kl(energy: Float[torch.Tensor, "batch n"]) -> torch.Tensor:
+    """``KL(p ‖ uniform)`` of the per-coordinate power ``p_i ∝ mean_b x_bi²``: 0 when every coordinate is used equally."""
+    power = energy.float().square().mean(0)
+    share = power / power.sum().clamp_min(WEIGHT_EPS)
+    return (share * (share * share.numel()).clamp_min(WEIGHT_EPS).log()).sum()
+
+
+def normalized_entropy(counts: Float[torch.Tensor, " n"]) -> torch.Tensor:
+    """Entropy of ``counts / Σ counts`` over ``log n``: 1 = uniform, 0 = a single site."""
+    share = counts.float() / counts.float().sum().clamp_min(WEIGHT_EPS)
+    return -(share * share.clamp_min(WEIGHT_EPS).log()).sum() / math.log(share.numel())
 
 
 def sample_bridge_time(

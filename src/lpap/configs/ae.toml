@@ -17,6 +17,12 @@ validation_batch_size = 64
 validation_batch_count = 4
 gallery_count = 16
 
+# Side terms (FOUNDATION §4.7), in priority order. 0 = monitor only; gradient reaches the encoder only.
+[side]
+residual_share = 0.0         # 1 − kept_share: the energy LPAP drops
+probe_ce_live = 0.0          # probe CE through live (a, w): make the code decodable
+usage_kl = 0.0               # KL(per-coordinate power ‖ uniform): anti fixed-support collapse
+
 [run]
 steps = 35000
 budget_minutes = 600

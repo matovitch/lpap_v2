@@ -15,12 +15,12 @@ from typing import Any
 import torch
 from torch import nn
 
-from lpap.codec import decoded_energy, frontend, surrogate_through
+from lpap.codec import decoded_energy, frontend, frozen_call, surrogate_through
 from lpap.data import ImageSet
 from lpap.flow import integrate
 from lpap.gallery import energy_tiles, grid, image_tiles, write_png
 from lpap.geometry import PairGeometry
-from lpap.losses import accuracies, image_l2, probe_ce, signed_mass, surrogate_ce
+from lpap.losses import accuracies, image_l2, normalized_entropy, probe_ce, signed_mass, surrogate_ce, usage_kl
 from lpap.lpap import exact_code
 from lpap.runtime import checkpoint
 from lpap.runtime.config import ModelConfig, to_dict
@@ -31,6 +31,16 @@ from lpap.stages import surrogate as surrogate_stage
 from lpap.stages.flow import learning_rate, load_field, top_share
 
 RUN = "ae"
+GROUPS = ("encoder", "renderer", "surrogates", "decoders")
+
+
+@dataclass(frozen=True)
+class SideTerms:
+    """Candidate side terms (§4.7), in priority order. Weight 0 = monitor only; gradient reaches the encoder only."""
+
+    residual_share: float
+    probe_ce_live: float
+    usage_kl: float
 
 
 @dataclass(frozen=True)
@@ -49,6 +59,7 @@ class AEStageConfig:
     signed_mass_weight: float
     signed_mass_tau: float
     surrogate_gradient: bool
+    side: SideTerms
     validation_batch_size: int
     validation_batch_count: int
     gallery_count: int
@@ -128,8 +139,10 @@ class AETask:
             )
         )
 
-    def _lossy(self, name: str, energy: torch.Tensor, *, train: bool) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Decoded energy of one lossy pair plus its CE terms and diagnostics."""
+    def _lossy(
+        self, name: str, energy: torch.Tensor, *, train: bool
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        """Decoded energy of one lossy pair, its CE terms and diagnostics, and its live side terms (§4.7)."""
         geometry = self.geometries[name]
         tokens = geometry.fold(energy)
         code = exact_code(energy, geometry)
@@ -153,6 +166,24 @@ class AETask:
         surrogate_accuracy, surrogate_weighted = accuracies(surrogate_logits, code.local_classes, weights)
         probe_accuracy, probe_weighted = accuracies(ce_logits, code.probes, weights)
         kept = code.amplitudes.square().sum(-1) / energy.detach().square().sum(-1).clamp_min(1e-12)
+        kept_sites = (
+            energy.new_zeros(energy.shape)
+            .scatter_add_(1, code.sources, code.amplitudes.ne(0).to(energy.dtype))
+            .clamp_max(1.0)
+        )
+        power = energy.square()
+        probe_live = probe_ce(live_logits, code)
+        if train and self.config.side.probe_ce_live > 0:
+            # Enabled: frozen decoder params, so this term trains the encoder only.
+            with self._autocast():
+                probe_live = probe_ce(
+                    frozen_call(self.decoders[name], inputs.amplitudes, inputs.dib_weights).float(), code
+                )
+        side = {
+            # 1 − kept_share, with a live gradient: pushes ‖x‖² from dropped onto kept coordinates.
+            "residual_share": ((power * (1.0 - kept_sites)).sum(-1) / power.sum(-1).clamp_min(1e-12)).mean(),
+            "probe_ce_live": probe_live,
+        }
         terms = {
             "surrogate_ce": surrogate_ce(surrogate_logits, code),
             "probe_ce": probe_ce(ce_logits, code),
@@ -161,19 +192,25 @@ class AETask:
             "probe_accuracy": probe_accuracy,
             "probe_weighted_accuracy": probe_weighted,
             "kept_share": kept.mean(),
+            "support_entropy": normalized_entropy(kept_sites.mean(0)),
         }
-        return decoded, terms
+        return decoded, terms, side
 
-    def _forward(self, image: torch.Tensor, *, train: bool) -> tuple[torch.Tensor, dict[str, torch.Tensor], list]:
+    def _forward(
+        self, image: torch.Tensor, *, train: bool
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor], list, dict[str, torch.Tensor]]:
+        """``metrics["loss"]`` is the main objective (§4.6); side terms come back live, mean over lossy pairs."""
         config = self.config
         energy = self._encode(image)
         decoded, metrics = [], {}
+        pair_sides: list[dict[str, torch.Tensor]] = []
         for name, geometry in self.geometries.items():
             if geometry.is_lossless:
                 decoded.append(energy)
                 continue
-            pair_decoded, terms = self._lossy(name, energy, train=train)
+            pair_decoded, terms, pair_side = self._lossy(name, energy, train=train)
             decoded.append(pair_decoded)
+            pair_sides.append(pair_side)
             metrics.update({f"{key}_{name}": value for key, value in terms.items()})
         renders = self._render(decoded)
         for name, render in zip(self.geometries, renders, strict=True):
@@ -186,7 +223,17 @@ class AETask:
                 metrics[key] = torch.stack([metrics[f"{key}_{name}"] for name in self.lossy]).mean()
                 loss = loss + weight * metrics[key]
         metrics["loss"] = loss
-        return energy, metrics, renders
+        side = {key: torch.stack([pair[key] for pair in pair_sides]).mean() for key in (pair_sides or [{}])[0]}
+        side["usage_kl"] = usage_kl(energy)
+        metrics["usage_kl"] = side["usage_kl"].detach()
+        return energy, metrics, renders, side
+
+    def _side_loss(self, side: dict[str, torch.Tensor]) -> torch.Tensor | None:
+        """Enabled side terms, weighted and summed (None when all weights are 0)."""
+        enabled = [
+            getattr(self.config.side, name) * term for name, term in side.items() if getattr(self.config.side, name) > 0
+        ]
+        return torch.stack(enabled).sum() if enabled else None
 
     def train_step(self) -> dict[str, torch.Tensor | float]:
         self.modules.train()
@@ -194,8 +241,13 @@ class AETask:
         for group in self.optimizer.param_groups:
             group["lr"] = rate
         image = self.images.sample_train(self.config.batch_size, self.generator)
-        _, metrics, _ = self._forward(image, train=True)
+        _, metrics, _, side = self._forward(image, train=True)
         self.optimizer.zero_grad(set_to_none=True)
+        # Side terms reach the encoder only by construction (§4.7), so one backward serves both.
+        side_loss = self._side_loss(side)
+        if side_loss is not None:
+            metrics["side_loss"] = side_loss.detach()
+            metrics["loss"] = metrics["loss"] + side_loss
         metrics["loss"].backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(self.modules.parameters(), self.config.max_grad_norm)
         self.optimizer.step()
@@ -208,20 +260,57 @@ class AETask:
         self.modules.eval()
         totals: dict[str, float] = {}
         for image in self.validation_images:
-            energy, metrics, _ = self._forward(image, train=False)
+            energy, metrics, _, _ = self._forward(image, train=False)
             metrics["energy_mean"] = energy.mean()
             metrics["energy_std"] = energy.std()
             metrics["energy_top10"] = top_share(energy, 0.1)
             for name, value in metrics.items():
                 totals[name] = totals.get(name, 0.0) + float(value) / len(self.validation_images)
+        totals.update(self.gradient_norms(self.validation_images[0]))
         return totals
+
+    def gradient_norms(self, image: torch.Tensor) -> dict[str, float]:
+        """``grad_<term>_<module>``: ‖∂term/∂θ_module‖ of each unweighted term, as routed (§3.6, §4.7).
+
+        Main terms as in the training graph, side terms through their live path. A missing
+        entry means no gradient reaches that module. Runs the eager modules: compiled
+        backwards donate their buffers and cannot be replayed (``retain_graph``).
+        """
+        self.modules.eval()
+        compiled = self.run_encoder, self.run_renderer, self.run_surrogates, self.run_decoders
+        self.run_encoder, self.run_renderer = self.encoder, self.renderer
+        self.run_surrogates, self.run_decoders = dict(self.surrogates.items()), dict(self.decoders.items())
+        try:
+            return self._gradient_norms(image)
+        finally:
+            self.run_encoder, self.run_renderer, self.run_surrogates, self.run_decoders = compiled
+
+    def _gradient_norms(self, image: torch.Tensor) -> dict[str, float]:
+        with torch.enable_grad():
+            _, metrics, _, side = self._forward(image, train=True)
+            terms = {
+                key: metrics[key] for key in ("image_l2", "signed_mass", "surrogate_ce", "probe_ce") if key in metrics
+            }
+            terms.update(side)
+            params = {group: [p for p in self.modules[group].parameters() if p.requires_grad] for group in GROUPS}
+            flat = [p for group in GROUPS for p in params[group]]
+            norms: dict[str, float] = {}
+            for term_name, term in terms.items():
+                grads = iter(torch.autograd.grad(term, flat, retain_graph=True, allow_unused=True))
+                for group in GROUPS:
+                    found = [g.norm() for g in (next(grads) for _ in params[group]) if g is not None]
+                    # Zero, not just None: slices of a shared call give exact-zero gradients.
+                    norm = float(torch.linalg.vector_norm(torch.stack(found))) if found else 0.0
+                    if norm > 0:
+                        norms[f"grad_{term_name}_{group}"] = norm
+        return norms
 
     @torch.no_grad()
     def gallery(self, path: Path) -> Path:
         """Rows: images, energies, then one reconstruction row per pair (model config order)."""
         self.modules.eval()
         image = self.validation_images[0][: self.config.gallery_count]
-        energy, _, renders = self._forward(image, train=False)
+        energy, _, renders, _ = self._forward(image, train=False)
         return write_png(path, grid([image_tiles(image), energy_tiles(energy), *map(image_tiles, renders)]))
 
     def state_dict(self) -> dict[str, Any]:

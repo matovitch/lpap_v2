@@ -273,6 +273,7 @@ amplitude gradient through the soft probe mix (`Σ_p σ_p g_p` instead of `g_p̂
 | Surrogate CE | ✗ | ✗ | ✓ | ✗ |
 | Probe CE | ✗ | ✗ | ✗ | ✓ |
 | Signed mass | ✓ | ✗ | ✗ | ✗ |
+| Side terms (§4.7), when enabled | ✓ | ✗ | ✗ | ✗ |
 
 ## 4. Losses
 
@@ -398,6 +399,50 @@ amplitudes; dropping it is a deliberate removal of that constraint, to
 revisit as an ablation if needed. Also dropped:
 soft-scatter L1 and the adaptive CE schedule in the teacher decoder stage,
 the dib-match mask.
+
+### 4.7 Side terms: monitor first, add one at a time
+
+The AE starts with `L_AE` only. Each candidate below is always computed and
+logged, with weight 0 (`[side]` in `ae.toml`). It is switched on only when its
+trigger fires, one term at a time and by resuming the run, and the decision
+is recorded in the §5 notes. Fewer sticks is the goal; a term that is never
+needed is never enabled.
+
+Every side term trains the **encoder only**. They are properties of the
+energy: `residual_share` and `usage_kl` depend on `x` alone, and an enabled
+`probe_ce_live` calls the decoder with detached params (as §3.4 does for the
+surrogate). The own-module CEs of §4.2–4.3 already reach only their module.
+
+| Priority | Term | Definition | Fixes | Trigger |
+| - | --- | --- | --- | --- |
+| 1 | `residual_share` | `1 − kept_share = Σ_dropped x² / ‖x‖²` (live), mean over lossy pairs | energy that LPAP cannot keep; the goal itself | `kept_share_<pair>` plateaus while lossy `image_l2` stays well above lossless |
+| 2 | `probe_ce_live` | §4.3 CE through live `(a, w)` (v3 `decoder_source_ce`) | codes the decoder cannot place | `probe_weighted_accuracy` plateaus while `kept_share` is high |
+| 3 | `usage_kl` | `KL(p ‖ uniform)`, `p_i ∝ mean_b x_bi²` | fixed-support collapse: all images use the same coordinates, LPAP degenerates to a fixed projection | `support_entropy_<pair>` falls steadily |
+
+Why these and not others:
+
+- `residual_share` is scale-invariant, so it cannot be met by shrinking the
+  energy (an L1 on `x` can, and then fights `L_signed`).
+- v3 energy L1 `|ê − x|` = residual (term 1) + misdecoded mass (term 2). The
+  split terms say which half is failing.
+- Terms 1 and 2 both reward a fixed support, which makes `kept_share` and
+  decoding trivial. Term 3 is the guard against that, so it is watched
+  whenever 1 or 2 is on.
+- Not candidates: surrogate CE into the encoder (rewards large selection
+  margins, unrelated to images); amplitude scale anchors (`L_signed` already
+  floors the mass; watch `energy_std`).
+
+Monitors, without a loss: `kept_share_<pair>`, `probe_weighted_accuracy_<pair>`,
+`surrogate_weighted_accuracy_<pair>`, `support_entropy_<pair>` (normalised
+entropy of how often each coordinate is kept: 1 = uniform, 0 = one fixed
+site), `usage_kl`, `energy_{mean,std,top10}`, `image_l2_lossless`
+(information preservation).
+
+Gradient table: each validation logs `grad_<term>_<module>` =
+`‖∂term/∂θ_module‖` of every unweighted term, main and side. A missing entry
+means no gradient reaches the module, so the table also checks §3.6 on the
+live model. To enable a term, pick `λ` so that `λ · grad_<term>_encoder` is
+about 0.1–0.3 × `grad_image_l2_encoder`, then retune by observation.
 
 ## 5. Training stages
 
