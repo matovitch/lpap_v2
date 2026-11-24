@@ -118,12 +118,17 @@ within about 2× the seed spread, with no outlier and no restart. σ0 0.3 leads 
 
 ## Planned (not pre-registered yet)
 
-- **S2: long noise (draft, 19:00).** Runs whether or not S1 shows an effect: S1's 2.5k decay ended before the patch
-  structure formed (footprints still growing at 5k), so it only tested *early* noise. Setup: a 20k schedule, judged
-  at 20k, with the decay over 10k. Open question: which σ0. Same σ0 with a 4× longer decay is about 4× more total
-  noise ("dose" ∝ σ0² × decay), so σ0 1 over 10k may be too strong (σ > 0.5 for 5k steps). Candidates: {0.3, 1}
-  (same scales, more dose) vs {0.15, 0.5} (about the same dose as S1's 0.3 / 1). An optional arm: a constant floor
-  σ = 0.1 throughout. Fix after the S1 15k results, before launching.
+- **S2: long noise (decided 19:05; arms in `experiments.py` as `s2-a` and `s2-b`).** S1's 2.5k decay ended before the
+  patch structure formed (footprints still growing at 5k), so it only tested *early* noise. Setup: a 20k schedule,
+  10k linear decay, judged at 20k, seed 2988 first. The arms form a dose ladder (dose ∝ σ0² × decay, ×4 per level):
+  σ0 0.5 (same dose as S1's σ0 1), 1 (4×) and 2 (16×; noise above signal for 5k steps, which probes the ceiling),
+  plus a control (needed again: the 20k schedule changes the LR).
+  Batch A = control, σ0 1 and σ0 2 (≈ 6h); batch B = σ0 0.5, plus second seeds of the standouts.
+  - **Gate (fixed before the S1 15k results):** if no σ0 arm of `s1-r2-s2988` beats its control by more than 1%
+    (the rung-1 control seed spread) in validation `image_l2` at 15k, S1 is called negative for early noise:
+    `s1-r2-s2987` is skipped and S2 batch A runs next. Otherwise, `s1-r2-s2987` runs first to confirm.
+  - Hypotheses. H4: with a long decay, some σ0 > 0 beats control at 20k by more than 1%. H5: the footprint
+    shape changes (cv down, span up, as seen for S1 σ0 1 at 5k) and the change persists at 20k.
 - **S3: encoder steps × noise.** A 2 × 2 design (encoder 4 / 8 steps; renderer 4) × (no noise / best or
   middle σ0) to test whether annealing needs a more expressive encoder (interaction).
 - **Learning-rate control.** lr × 3, to tell "stuck" from "slow".

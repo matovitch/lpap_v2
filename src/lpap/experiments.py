@@ -19,11 +19,13 @@ class Arm:
 SEEDS = (2987, 2988, 2989)
 
 
-def _noise_arm(study: str, sigma: float, seed: int, stop_at: int, decay: int = 2500) -> Arm:
+def _noise_arm(
+    study: str, sigma: float, seed: int, stop_at: int, decay: int = 2500, steps: int = 15000
+) -> Arm:
     tag = "control" if sigma == 0 else f"sig{sigma:g}"
     overrides = {
         "seed": seed,
-        "run.steps": 15000,
+        "run.steps": steps,
         "run.stop_at": stop_at,
         "explore.noise_sigma": sigma,
         "explore.noise_decay_steps": decay if sigma > 0 else 0,
@@ -41,4 +43,15 @@ S1_R2 = {
     seed: [_noise_arm("s1", sigma, seed, stop_at=15000) for sigma in (0.0, 0.1, 0.3, 1.0)] for seed in SEEDS[:2]
 }
 
-STUDIES: dict[str, list[Arm]] = {"s1": S1, "s1-r2-s2988": S1_R2[2988], "s1-r2-s2987": S1_R2[2987]}
+# S2: long noise, a dose ladder (dose ∝ σ0² · decay; ×4 per level, σ0 0.5 = S1's σ0 1 dose). 20k schedule,
+# 10k linear decay, judged at 20k. Batch A = the most informative arms (≈ 6 h), batch B = the same-dose arm.
+S2_A = [_noise_arm("s2", sigma, 2988, stop_at=20000, decay=10000, steps=20000) for sigma in (0.0, 1.0, 2.0)]
+S2_B = [_noise_arm("s2", 0.5, 2988, stop_at=20000, decay=10000, steps=20000)]
+
+STUDIES: dict[str, list[Arm]] = {
+    "s1": S1,
+    "s1-r2-s2988": S1_R2[2988],
+    "s1-r2-s2987": S1_R2[2987],
+    "s2-a": S2_A,
+    "s2-b": S2_B,
+}
