@@ -395,7 +395,7 @@ Monitor only since AE step 15k (`λ_m = 0`; `signed_mass`, `positive_mass`,
   `‖x‖`. At step 15k, `min(m+, m−) = 0.094 < τ`, so the floor starts penalising
   sparsity.
 
-Re-enable (gap only) if `energy_mean` drifts away from 0.
+Watch `energy_mean` and `m±`; any change to `λ_m` is a human decision.
 
 ### 4.6 AE total
 
