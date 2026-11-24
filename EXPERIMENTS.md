@@ -168,23 +168,29 @@ on objects. Its 8-image render L2 is no better at 5k. The 15k check is whether t
     has no decay, and its averaged iterate is evaluable at any step. It needs `optimizer.train()` / `.eval()`
     switching around validation and checkpoints. Rungs then become plain truncations of a single run.
   - **Noise driven by gradients instead of steps:**
-    - **Primary form:** σ_t = σ_max · ρ_t, where ρ_t = ‖EMA_β(g)‖ / EMA_β(‖g‖) ∈ [0, 1] is a gradient
-      signal-to-noise ratio. Here g is the encoder gradient and β is set by a half-life *h*, in steps.
-    - **Behaviour:** ρ is high while gradients agree (early) and falls as they cancel (near a basin). The noise
-      therefore follows convergence, not the clock. The feedback is negative: more noise means noisier
-      gradients, so ρ falls and the noise falls with it. This should be stable, but it must be checked on the
-      local GPU before molab.
-    - **Alternative:** σ_t = σ_max · EMA(‖g‖) / EMA_max(‖g‖).
-    - Two knobs: σ_max (relative, starting at S1's 1.0) and *h*.
-  - **Arms (seed 2988 first, then 2987):**
+    - g is the encoder gradient; β is set by a half-life *h*, in steps. Two knobs: σ_max (relative, starting
+      at S1's 1.0) and *h*. Nothing else refers to the step count.
+    - **Primary form (Camille's proposal): gradient-norm EMA.** σ_t = σ_max · n_t / max_{s≤t} n_s, where
+      n_t = EMA_β(‖g‖). The running max makes it unit-free without a step count. The noise follows how hard
+      the encoder is still being pushed. Risk: with stochastic gradients ‖g‖ does not go to 0, so σ may settle
+      at a floor instead of vanishing. That is acceptable for an anytime process, but we have to measure it.
+    - **Alternative form: gradient signal-to-noise ratio.** σ_t = σ_max · ρ_t, where
+      ρ_t = ‖EMA_β(g)‖ / EMA_β(‖g‖) ∈ [0, 1]. ρ is high while gradients agree (early) and falls as they cancel
+      (near a basin), so it can go to 0. Its feedback is negative: more noise means noisier gradients, so ρ
+      falls and the noise falls with it.
+    - Both feedback loops (noise → gradient → noise) must be checked on the local GPU before molab: logged
+      σ_t trace, no oscillation, no collapse to 0 in the first few hundred steps.
+  - **Arms (seed 2988 first, then 2987; 3 × 15k from scratch ≈ 4.5h, one session):**
     - (a) schedule-free, no noise;
-    - (b) schedule-free with gradient-driven noise;
+    - (b) schedule-free + gradient-norm-EMA noise (primary);
+    - (c) schedule-free + gradient-SNR noise (alternative);
     - reference: the S1 15k cosine arms (control and σ0 1).
   - **Draft hypotheses:**
     - H6: (a) matches the cosine control at equal steps within the seed spread, so the optimizer swap alone is
       neutral or better.
     - H7: (b) beats (a) by more than the seed spread. It also reproduces σ0 1's signature (sparse, edge-aligned
       energy; small, local footprints), with no step count anywhere in its configuration.
+    - H7′: same as H7 for (c). If only one of (b) and (c) holds, it becomes the default.
 - **S3: encoder steps × exploration.** A 2 × 2 design: encoder 4 / 8 steps (renderer 4) × no exploration / the
   best exploration from S1 or S2. It tests whether escaping the basin needs a more expressive encoder.
 - **Learning-rate control.** LR × 3, to tell "stuck" from "slow". With schedule-free, this becomes a one-knob
