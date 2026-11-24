@@ -414,6 +414,9 @@ end-to-end pipeline runner.
 | 5 | AE (all pairs) | images | encoder, renderer, decoders; surrogates by CE only | — | §4.6 | ~120k steps, batch 64 (try 128) |
 
 Notes:
+- Stage 4 first-run validation at the full v3 budgets: `c128_k16` probe CE
+  1.914 (accuracy 0.250, `|a*|`-weighted 0.263); `c256_k24` 1.146 (0.458,
+  0.478); `c512_k32` 0.448 (0.744, 0.761).
 - Stage 4 needs only `G` and exact LPAP; it does not load a surrogate. Pair
   identity (`G`) is checked when stage 5 assembles the bundle.
 - Stage 5: both flow copies start from stage 1. Surrogates and decoders start
