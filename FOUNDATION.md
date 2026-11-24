@@ -20,6 +20,10 @@ Decisions:
   compressible under LPAP**. The lossless pair is a real, jointly trained pair:
   it forces the remap to stay information-preserving while the lossy pairs
   shape compressibility.
+- **Signal-agnostic.** No hand-designed basis (wavelet, DCT, patches) between
+  the flow and LPAP: the representation must be discovered from data, so the
+  method transfers to other signals (e.g. LLM embeddings, cf. Matryoshka-style
+  nested codes). Images are only the first testbed.
 - Data unchanged: 32×32 grayscale, `/255`, Hilbert order, `N = 1024`.
 - Cut from v3:
   - the final exact-LPAP decoder finetune stage;
@@ -592,3 +596,7 @@ Parking lot (not in the first version):
 - Re-probing model sizes; `torch.compile`; AE batch 128.
 - Exploration noise on the surrogate (Gumbel) if the ST gradient proves too weak.
 - LPAP-regularised recurrent states (v3 README "future experiments").
+- Exploring beyond the image-aligned start (AE step 17k: energy is a local,
+  one-scale concentration of the image). Candidates: more encoder flow steps;
+  annealed noise on the energy before LPAP. Rejected: a fixed wavelet basis
+  (not signal-agnostic, §0).
