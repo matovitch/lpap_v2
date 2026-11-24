@@ -13,21 +13,27 @@ results are appended, never rewritten. Negative results stay.
   rung (`run.stop_at`). Promoting an arm means raising its `stop_at` in a commit, and the run resumes. We
   promote any arm that is not clearly worse; when unsure, spend the compute.
 - **Seeds** (`seed` = data order + noise; same teachers): at least 2 per arm at rung 1 and 3 for finalists.
-  A difference is only called when it exceeds the seed spread of both arms involved.
+  A paired gap on one seed is preliminary, even when large: paired runs share initialization and data order,
+  so trajectory luck can create a gap. Call an effect only when it exceeds the seed spread of both arms and
+  has the same sign on a second seed.
 - **Metrics** (validation, fixed 256 images, noise-free forward):
   - primary: `image_l2` (mean over pairs) and `image_l2_<pair>`;
   - compressibility: `kept_share_<pair>`, `probe_weighted_accuracy_<pair>`;
   - geometry: `stage1_corr` (Pearson correlation of the energy with the frozen stage-1 energy; 1 = has not
     moved), `support_entropy_<pair>`, `usage_kl`, `energy_top10`;
-  - gathering footprint (Jacobian rows `∂x_i/∂input`, 16 sites × 4 validation images):
+  - gathering footprint (Jacobian rows `∂x_i/∂input`; live metric uses 16 sites × 4 validation images):
     - `gather_area` = participation ratio, about the number of input samples one energy coordinate uses;
     - `gather_span` = rms distance of those inputs along the 1-D signal;
     - `*_stage1` = the frozen stage-1 values, as reference.
 
     It tests whether the encoder learns local, JPEG-like transforms of patches (area > 1) and whether those
-    patches grow;
+    patches grow. The live estimate is noisy; use `scripts/footprints.py` (64 images × 128 sites) for
+    quantitative footprint claims, reporting distributions (at least median and spread), not only means;
   - routing: `grad_<term>_<module>`.
-- **Compute**: about 3 steps/s at batch 64 (H100-class, molab), so a 5k rung takes about 25 min per arm.
+- **Galleries**: use the same fixed 8 images and row order for every comparison. Show each run's energy and
+  kept coefficients divided by that run's energy RMS, with a shared ±4 RMS color scale; include c128 and c512
+  renders and their L2s. Save and link one gallery per rung being interpreted.
+- **Compute**: about 3 steps/s at batch 64 (RTX PRO 6000 Blackwell, molab), so a 5k rung takes about 25 min per arm.
   molab is free: when in doubt, add seeds rather than guess.
 - **molab etiquette** (an account ban was appealed once): use a fresh session for each long batch, size the
   batch to finish well before the 12h session limit (target ≤ 6h), leave a break between batches, and never
