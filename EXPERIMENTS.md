@@ -338,6 +338,45 @@ Offline gathering footprints (64 images × 128 sites, fp32) and full validation 
      and/or `σ_max` with floor subtraction `max(0, snr - c·√(ln 2 / (2h)))`, or gating a higher initial `σ` by
      `grad_snr` once SF's LR is tuned.
 
+## S2a: live-`rms` baseline isolation + Schedule-Free LR calibration
+
+**Questions.**
+1. How much of S1 `σ0 = 1`'s −10.0% gain on seed 2988 (`8.15` vs `9.05`) comes from pure exploration vs S1's
+   detached-`rms` energy inflation (`rms = 1.21` vs `0.40`)?
+2. What peak LR lets noiseless Schedule-Free AdamW (`σ = 0`) match or beat cosine AdamW (`9.05` at 15k)
+   without instability?
+
+**Local pre-flight probe (100 steps, batch 4, warmup 20, RTX 5060, seed 2988):**
+- All four Schedule-Free LRs were stable with lower peak `grad_norm` at higher LR and monotonically lower
+  100-step `val_l2`: `adamw 1×` (`2.8e-5`) `23.79` (`max_gn 2.15`), `sf 1×` `23.68` (`2.61`), `sf 3×` (`8.4e-5`)
+  `22.32` (`1.86`), `sf 6×` (`1.68e-4`) `20.31` (`2.05`), `sf 10×` (`2.8e-4`) `20.15` (`1.45`).
+
+**Arms (`s2a-s2988`, seed 2988, 4 × 15k ≈ 5.5h in one molab session):**
+- `s2a-live-sig1-s2988`: exact S1 `sig1` recipe (AdamW cosine, `lr = 2.8e-5`, linear `σ0 = 1.0` over 2.5k),
+  now with live `rms`. Compared directly against `s1-control-s2988` (`9.05`) and `s1-sig1-s2988` (`8.15`).
+- `s2a-sf-lr3x-s2988`: Schedule-Free AdamW, `lr = 8.4e-5` (3×), `warmup_steps = 500`, `σ = 0`.
+- `s2a-sf-lr6x-s2988`: Schedule-Free AdamW, `lr = 1.68e-4` (6×), `warmup_steps = 500`, `σ = 0`.
+- `s2a-sf-lr10x-s2988`: Schedule-Free AdamW, `lr = 2.8e-4` (10×), `warmup_steps = 500`, `σ = 0`.
+  (Paired with `s2-sf-control-s2988` at 1× = `2.8e-5` → `10.17`.)
+
+**Predictions** (written before running):
+- **H8 (exploration without inflation):** `s2a-live-sig1-s2988` keeps `energy_rms ~ 0.40–0.45`, reproduces the
+  compact edge-aligned basin (footprints & gallery), and beats `s1-control-s2988` (`9.05`) by > 2% (5× seed
+  spread), though possibly less than detached-`rms` `s1-sig1`'s −10.0% if scale inflation contributed to the
+  unnormalized decoder/renderer gain.
+- **H9 (Schedule-Free LR):** at least one of `{3×, 6×, 10×}` matches or beats `s1-control-s2988` (`9.05`) at
+  15k cleanly (`lossless ≤ 0.85e-3`, no divergence), giving the calibrated anytime baseline for S2b (anytime
+  noise retry). Also watch whether high-LR SF alone escapes the scattered-dot basin (footprints/gallery) —
+  answering the planned "stuck vs slow" LR control simultaneously.
+
+**Decision rule.**
+- Pick the best stable Schedule-Free LR (lowest 15k `image_l2` with clean `lossless` and monotone trajectory)
+  as the S2b anytime optimizer baseline.
+- If `s2a-live-sig1` keeps ≥ ~4% gain over `s1-control` with compact footprints, proceed to S2b (re-tuning
+  anytime `grad_snr` dose + floor subtraction on top of the calibrated SF LR). If `s2a-live-sig1` collapses
+  back near `s1-control` despite compact footprints, inspect the unnormalized `Decoder`/`Renderer` input scale
+  before adding more exploration noise.
+
 ## Planned (not pre-registered yet)
 
 - **S3: encoder steps × exploration.** A 2 × 2 design: encoder 4 / 8 steps (renderer 4) × no exploration / the

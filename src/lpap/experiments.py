@@ -46,6 +46,7 @@ def _anytime_arm(
     seed: int,
     stop_at: int,
     *,
+    lr: float | None = None,
     noise_mode: str = "linear",
     sigma: float = 0.0,
     half_life: float = 0.0,
@@ -60,6 +61,8 @@ def _anytime_arm(
         "explore.noise_mode": noise_mode,
         "explore.noise_half_life": half_life,
     }
+    if lr is not None:
+        overrides["learning_rate"] = lr
     return Arm(f"{study}-{tag}-s{seed}", overrides)
 
 
@@ -75,10 +78,20 @@ S2 = {
     for seed in SEEDS[:2]
 }
 
+# S2a: calibration after S2 — (a) replay S1 σ0=1 with live rms (isolates exploration vs scale inflation), and
+# (b) Schedule-Free LR sweep at 3× / 6× / 10× cosine peak LR (paired with s2-sf-control at 1×). 4 × 15k ≈ 5.5 h.
+S2A = [
+    _noise_arm("s2a-live", 1.0, 2988, stop_at=15000),
+    _anytime_arm("s2a", "sf-lr3x", 2988, stop_at=15000, lr=8.4e-5),
+    _anytime_arm("s2a", "sf-lr6x", 2988, stop_at=15000, lr=1.68e-4),
+    _anytime_arm("s2a", "sf-lr10x", 2988, stop_at=15000, lr=2.8e-4),
+]
+
 STUDIES: dict[str, list[Arm]] = {
     "s1": S1,
     "s1-r2-s2988": S1_R2[2988],
     "s1-r2-s2987": [arm for arm in S1_R2[2987] if arm.overrides["explore.noise_sigma"] in (0.0, 1.0)],  # confirmation
     "s2-s2988": S2[2988],
     "s2-s2987": S2[2987],
+    "s2a-s2988": S2A,
 }
