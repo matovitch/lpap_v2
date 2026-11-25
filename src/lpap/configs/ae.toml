@@ -1,6 +1,7 @@
 # Stage 5: autoencoder over all pairs (FOUNDATION §4.4–4.6, §5). v3: lr 2.8e-5, batch 64, 35k steps.
 seed = 2987
 batch_size = 64
+optimizer = "adamw"          # "adamw" (cosine to run.steps) or "schedulefree" (anytime, Defazio et al. 2024)
 learning_rate = 2.8e-5
 warmup_steps = 500
 min_lr_ratio = 0.1
@@ -25,8 +26,10 @@ usage_kl = 0.0               # KL(per-coordinate power ‖ uniform): anti fixed-
 
 # Exploration knobs (EXPERIMENTS.md); these defaults = plain AE.
 [explore]
-noise_sigma = 0.0            # σ0 of the annealed relative noise on the energy (training only)
-noise_decay_steps = 0        # σ decays linearly from σ0 to 0 over these steps
+noise_sigma = 0.0            # σ0 (linear) or σ_max (gradient-driven) of relative noise on the energy
+noise_decay_steps = 0        # linear mode: decay σ0 → 0 over these steps
+noise_mode = "linear"        # "linear" | "grad_norm" | "grad_snr"
+noise_half_life = 0.0        # grad_norm / grad_snr: EMA half-life h in steps (β = 2^(-1/h))
 # encoder_steps = 8          # omitted: integration_steps; the renderer keeps integration_steps
 
 [run]

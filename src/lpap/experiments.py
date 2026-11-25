@@ -19,9 +19,7 @@ class Arm:
 SEEDS = (2987, 2988, 2989)
 
 
-def _noise_arm(
-    study: str, sigma: float, seed: int, stop_at: int, decay: int = 2500, steps: int = 15000
-) -> Arm:
+def _noise_arm(study: str, sigma: float, seed: int, stop_at: int, decay: int = 2500, steps: int = 15000) -> Arm:
     tag = "control" if sigma == 0 else f"sig{sigma:g}"
     overrides = {
         "seed": seed,
@@ -39,9 +37,7 @@ S1 = [_noise_arm("s1", sigma, seed, stop_at=5000) for seed in SEEDS[:2] for sigm
 
 # Rung 2 = 15k for every arm (none worse than control beyond the seed spread at 5k). One seed per molab
 # session (≈ 4 h each): resumes each run from its 5k ``last.pt`` on HF.
-S1_R2 = {
-    seed: [_noise_arm("s1", sigma, seed, stop_at=15000) for sigma in (0.0, 0.1, 0.3, 1.0)] for seed in SEEDS[:2]
-}
+S1_R2 = {seed: [_noise_arm("s1", sigma, seed, stop_at=15000) for sigma in (0.0, 0.1, 0.3, 1.0)] for seed in SEEDS[:2]}
 
 STUDIES: dict[str, list[Arm]] = {
     "s1": S1,

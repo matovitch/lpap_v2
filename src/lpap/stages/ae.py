@@ -8,11 +8,13 @@ detached inputs.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import torch
+from schedulefree import AdamWScheduleFree
 from torch import nn
 
 from lpap.codec import decoded_energy, frontend, frozen_call, surrogate_through
@@ -41,6 +43,8 @@ from lpap.stages.flow import learning_rate, load_field, top_share
 
 RUN = "ae"
 GROUPS = ("encoder", "renderer", "surrogates", "decoders")
+OPTIMIZERS = ("adamw", "schedulefree")
+NOISE_MODES = ("linear", "grad_norm", "grad_snr")
 FOOTPRINT_SITES = 16  # energy coordinates probed per image for the gathering footprint
 
 
@@ -87,19 +91,23 @@ class SideTerms:
 
 @dataclass(frozen=True)
 class Explore:
-    """Exploration knobs (EXPERIMENTS.md). Defaults (0, 0, None) = the plain AE.
+    """Exploration knobs (EXPERIMENTS.md). Defaults (0, 0, "linear", 0, None) = the plain AE.
 
-    Annealed relative noise: training only, ``x̃ = x + σ(step)·rms(x)·ε`` (``rms`` kept live so encoder and
-    renderer optimize the same noisy objective) feeds LPAP and the renderer for every pair; ``σ`` decays
-    linearly from ``noise_sigma`` to 0 over ``noise_decay_steps``.
+    Relative noise on the energy (training only): ``x̃ = x + σ·rms(x)·ε`` with ``rms`` kept live so encoder
+    and renderer optimize the same noisy objective. ``noise_mode`` selects how ``σ`` evolves:
+    - ``linear``: decays linearly from ``noise_sigma`` to 0 over ``noise_decay_steps``.
+    - ``grad_norm``: anytime EMA (half-life ``noise_half_life``) of encoder ``‖g‖``, ``σ = σ_max · ema / peak``.
+    - ``grad_snr``: anytime EMA directional SNR ``‖EMA(g)‖ / EMA(‖g‖) ∈ [0, 1]``, ``σ = σ_max · snr``.
     """
 
     noise_sigma: float
     noise_decay_steps: int
+    noise_mode: str
+    noise_half_life: float
     encoder_steps: int | None  # None: ``integration_steps``; the renderer always uses ``integration_steps``
 
     def sigma(self, step: int) -> float:
-        if self.noise_sigma <= 0 or self.noise_decay_steps <= 0:
+        if self.noise_mode != "linear" or self.noise_sigma <= 0 or self.noise_decay_steps <= 0:
             return 0.0
         return self.noise_sigma * max(0.0, 1.0 - step / self.noise_decay_steps)
 
@@ -112,10 +120,75 @@ def add_relative_noise(energy: torch.Tensor, sigma: float) -> torch.Tensor:
     return energy + sigma * rms * torch.randn_like(energy)
 
 
+class NoiseController:
+    """Stateful relative-noise controller for linear and gradient-driven anytime schedules."""
+
+    def __init__(self, explore: Explore) -> None:
+        if explore.noise_mode not in NOISE_MODES:
+            raise ValueError(f"unknown noise_mode {explore.noise_mode!r}; expected one of {NOISE_MODES}")
+        if explore.noise_mode != "linear" and explore.noise_sigma > 0 and explore.noise_half_life <= 0:
+            raise ValueError(f"noise_mode={explore.noise_mode!r} requires noise_half_life > 0")
+        self.explore = explore
+        self.beta = 2.0 ** (-1.0 / explore.noise_half_life) if explore.noise_half_life > 0 else 0.0
+        self.norm_ema = 0.0
+        self.norm_max = 0.0
+        self.ratio = 1.0
+        self.grad_ema: list[torch.Tensor] | None = None
+
+    def sigma(self, step: int) -> float:
+        if self.explore.noise_sigma <= 0:
+            return 0.0
+        if self.explore.noise_mode == "linear":
+            return self.explore.sigma(step)
+        return self.explore.noise_sigma * self.ratio
+
+    def observe(self, params: Iterable[nn.Parameter]) -> float:
+        """Record clipped pre-step encoder gradients and return their L2 norm."""
+        grads = [p.grad.detach().float() for p in params if p.grad is not None]
+        if not grads:
+            return 0.0
+        grad_norm = float(torch.linalg.vector_norm(torch.stack([g.norm() for g in grads])))
+        mode = self.explore.noise_mode
+        if self.explore.noise_sigma <= 0 or mode == "linear":
+            return grad_norm
+        if mode == "grad_norm":
+            # Zero-init without bias correction: ramps smoothly over O(h) steps so early gradient spikes
+            # do not freeze norm_max and collapse σ in the first hundred steps.
+            self.norm_ema = self.beta * self.norm_ema + (1.0 - self.beta) * grad_norm
+            self.norm_max = max(self.norm_max, self.norm_ema)
+            self.ratio = self.norm_ema / self.norm_max if self.norm_max > 0 else 1.0
+        elif mode == "grad_snr":
+            if self.grad_ema is None:
+                self.grad_ema = [g * (1.0 - self.beta) for g in grads]
+            else:
+                torch._foreach_mul_(self.grad_ema, self.beta)
+                torch._foreach_add_(self.grad_ema, grads, alpha=1.0 - self.beta)
+            self.norm_ema = self.beta * self.norm_ema + (1.0 - self.beta) * grad_norm
+            ema_norm = float(torch.linalg.vector_norm(torch.stack([m.norm() for m in self.grad_ema])))
+            self.ratio = min(1.0, ema_norm / self.norm_ema) if self.norm_ema > 0 else 1.0
+        return grad_norm
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "norm_ema": self.norm_ema,
+            "norm_max": self.norm_max,
+            "ratio": self.ratio,
+            "grad_ema": None if self.grad_ema is None else [m.detach().cpu().clone() for m in self.grad_ema],
+        }
+
+    def load_state_dict(self, state: dict[str, Any], device: torch.device) -> None:
+        self.norm_ema = float(state["norm_ema"])
+        self.norm_max = float(state["norm_max"])
+        self.ratio = float(state["ratio"])
+        saved = state.get("grad_ema")
+        self.grad_ema = None if saved is None else [m.to(device=device, dtype=torch.float32).clone() for m in saved]
+
+
 @dataclass(frozen=True)
 class AEStageConfig:
     seed: int
     batch_size: int
+    optimizer: str
     learning_rate: float
     warmup_steps: int
     min_lr_ratio: float
@@ -187,11 +260,33 @@ class AETask:
         self.run_renderer = compiled(self.renderer)
         self.run_surrogates = {name: compiled(module) for name, module in self.surrogates.items()}
         self.run_decoders = {name: compiled(module) for name, module in self.decoders.items()}
-        self.optimizer = torch.optim.AdamW(self.modules.parameters(), lr=config.learning_rate)
+        if config.optimizer not in OPTIMIZERS:
+            raise ValueError(f"unknown optimizer {config.optimizer!r}; expected one of {OPTIMIZERS}")
+        if config.optimizer == "schedulefree":
+            # Match PyTorch AdamW's default weight_decay=0.01 (AdamWScheduleFree defaults to 0.0).
+            self.optimizer: torch.optim.Optimizer = AdamWScheduleFree(
+                self.modules.parameters(),
+                lr=config.learning_rate,
+                warmup_steps=config.warmup_steps,
+                weight_decay=0.01,
+            )
+        else:
+            self.optimizer = torch.optim.AdamW(self.modules.parameters(), lr=config.learning_rate)
+        self.noise = NoiseController(config.explore)
         self.generator = torch.Generator().manual_seed(config.seed)
         self.step = 0
         self.validation_images = images.validation_batches(config.validation_batch_size, config.validation_batch_count)
         self.stage1_energies, self.stage1_footprint = self._stage1_reference(model, store)
+
+    def _set_train_mode(self) -> None:
+        self.modules.train()
+        if hasattr(self.optimizer, "train"):
+            self.optimizer.train()
+
+    def _set_eval_mode(self) -> None:
+        self.modules.eval()
+        if hasattr(self.optimizer, "eval"):
+            self.optimizer.eval()
 
     def _footprint_images(self) -> torch.Tensor:
         return self.validation_images[0][:4]
@@ -334,12 +429,14 @@ class AETask:
         return torch.stack(enabled).sum() if enabled else None
 
     def train_step(self) -> dict[str, torch.Tensor | float]:
-        self.modules.train()
-        rate = learning_rate(self.config, self.step)
-        for group in self.optimizer.param_groups:
-            group["lr"] = rate
+        self._set_train_mode()
+        rate = self.config.learning_rate
+        if self.config.optimizer == "adamw":
+            rate = learning_rate(self.config, self.step)
+            for group in self.optimizer.param_groups:
+                group["lr"] = rate
         image = self.images.sample_train(self.config.batch_size, self.generator)
-        noise = self.config.explore.sigma(self.step)
+        noise = self.noise.sigma(self.step)
         _, metrics, _, side = self._forward(image, train=True, noise=noise)
         self.optimizer.zero_grad(set_to_none=True)
         # Side terms reach the encoder only by construction (§4.7), so one backward serves both.
@@ -349,11 +446,16 @@ class AETask:
             metrics["loss"] = metrics["loss"] + side_loss
         metrics["loss"].backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(self.modules.parameters(), self.config.max_grad_norm)
+        # Observe encoder gradients strictly BEFORE optimizer.step(): AdamWScheduleFree divides p.grad in-place.
+        encoder_grad_norm = self.noise.observe(self.encoder.parameters())
         self.optimizer.step()
+        if self.config.optimizer == "schedulefree":
+            rate = float(self.optimizer.param_groups[0]["scheduled_lr"])
         self.step += 1
         return {
             **{name: value.detach() for name, value in metrics.items()},
             "grad_norm": grad_norm,
+            "encoder_grad_norm": encoder_grad_norm,
             "lr": rate,
             "noise_sigma": noise,
         }
@@ -361,7 +463,7 @@ class AETask:
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
         """Fixed validation images. ``kept_share_<pair>``: share of ``‖x‖²`` the exact code keeps."""
-        self.modules.eval()
+        self._set_eval_mode()
         totals: dict[str, float] = {}
         for image, reference in zip(self.validation_images, self.stage1_energies, strict=True):
             energy, metrics, _, _ = self._forward(image, train=False)
@@ -377,6 +479,7 @@ class AETask:
 
     def footprint(self) -> dict[str, float]:
         """Gathering footprint of the live encoder (eager, fp32) next to its stage-1 reference."""
+        self._set_eval_mode()
         steps = self.config.explore.encoder_steps or self.config.integration_steps
 
         def encode(image: torch.Tensor) -> torch.Tensor:
@@ -392,7 +495,7 @@ class AETask:
         entry means no gradient reaches that module. Runs the eager modules: compiled
         backwards donate their buffers and cannot be replayed (``retain_graph``).
         """
-        self.modules.eval()
+        self._set_eval_mode()
         compiled = self.run_encoder, self.run_renderer, self.run_surrogates, self.run_decoders
         self.run_encoder, self.run_renderer = self.encoder, self.renderer
         self.run_surrogates, self.run_decoders = dict(self.surrogates.items()), dict(self.decoders.items())
@@ -424,15 +527,18 @@ class AETask:
     @torch.no_grad()
     def gallery(self, path: Path) -> Path:
         """Rows: images, energies, then one reconstruction row per pair (model config order)."""
-        self.modules.eval()
+        self._set_eval_mode()
         image = self.validation_images[0][: self.config.gallery_count]
         energy, _, renders, _ = self._forward(image, train=False)
         return write_png(path, grid([image_tiles(image), energy_tiles(energy), *map(image_tiles, renders)]))
 
     def state_dict(self) -> dict[str, Any]:
+        # Schedule-Free checkpoints must save the eval (averaged x) iterate and train_mode=False.
+        self._set_eval_mode()
         return {
             "modules": self.modules.state_dict(),
             "optimizer": self.optimizer.state_dict(),
+            "noise": self.noise.state_dict(),
             "generator": self.generator.get_state(),
             "step": self.step,
         }
@@ -440,10 +546,13 @@ class AETask:
     def load_state_dict(self, state: dict[str, Any]) -> None:
         self.modules.load_state_dict(state["modules"])
         self.optimizer.load_state_dict(state["optimizer"])
+        if "noise" in state:
+            self.noise.load_state_dict(state["noise"], self.device)
         self.generator.set_state(state["generator"])
         self.step = state["step"]
 
     def weights(self) -> dict[str, Any]:
+        self._set_eval_mode()
         return {"modules": self.modules.state_dict()}
 
 

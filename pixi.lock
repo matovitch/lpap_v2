@@ -281,6 +281,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-ng-2.3.3-hce19668_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstandard-0.25.0-py313hd42f317_5.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb78ec9c_7.conda
+      - pypi: https://files.pythonhosted.org/packages/93/ef/aac74263f0252806b46f0fd5a52566ee06129744572d0958cd0a77d22b0a/schedulefree-1.4.1-py3-none-any.whl
       - pypi: ./
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-8_kmp_llvm.conda
@@ -2461,12 +2462,13 @@ packages:
 - pypi: ./
   name: lpap
   version: 2.0.0.dev0
-  sha256: beb4d6cf45a1ce497b9b81645e8306a0bb1022a22e8f0e44f839a9511080f5a2
+  sha256: f0b9039762b0d37be301adc9bcf0d430e6c22fd274a7325b7b8fbe99902c1b12
   requires_dist:
   - torch>=2.8
   - jaxtyping>=0.3
   - huggingface-hub>=0.34
   - zstandard>=0.23
+  - schedulefree>=1.4
   requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/marimo-0.25.1-py313hd5f5364_0.conda
   sha256: 81d92748f6dd47dbdaeffe1d217c8e808edafe6ded8a64db52930127b9415b89
@@ -3363,6 +3365,14 @@ packages:
   - pkg:pypi/ruff?source=compressed-mapping
   size: 8932450
   timestamp: 1795120717477
+- pypi: https://files.pythonhosted.org/packages/93/ef/aac74263f0252806b46f0fd5a52566ee06129744572d0958cd0a77d22b0a/schedulefree-1.4.1-py3-none-any.whl
+  name: schedulefree
+  version: 1.4.1
+  sha256: 21602d3a0d35ee190152e3d56f547ea725d316310bd198fa6108f8039386b242
+  requires_dist:
+  - torch
+  - typing-extensions
+  requires_python: '>=3.4'
 - conda: https://conda.anaconda.org/conda-forge/noarch/scikit-build-core-1.1.2-pyhcb39dcd_0.conda
   sha256: 70af9ffa9794089bce0552aac38e943415c84656c88585ef7117f4019783862b
   md5: 4e5881f78c5631e21ad0baaac00af3b3

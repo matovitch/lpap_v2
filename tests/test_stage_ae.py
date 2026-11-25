@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from lpap.data import ImageSet
@@ -186,3 +187,103 @@ def test_add_relative_noise_keeps_rms_gradient_and_handles_zero():
     zeros = torch.zeros(2, 64, requires_grad=True)
     (zero_grad,) = torch.autograd.grad(ae.add_relative_noise(zeros, 1.0).square().mean(), zeros)
     assert torch.isfinite(zero_grad).all()
+
+
+def test_noise_controller_grad_norm_and_snr():
+    p = torch.nn.Parameter(torch.zeros(4))
+
+    # grad_norm: starts at σ_max, decays when ‖g‖ drops below its peak, and resumes cleanly.
+    ctrl = ae.NoiseController(ae.Explore(1.0, 0, "grad_norm", 4.0, None))
+    assert ctrl.sigma(0) == 1.0
+    for _ in range(12):
+        p.grad = torch.ones(4)
+        ctrl.observe([p])
+    peak_sigma = ctrl.sigma(12)
+    assert 0.99 <= peak_sigma <= 1.0
+    for _ in range(12):
+        p.grad = torch.full((4,), 0.1)
+        ctrl.observe([p])
+    decayed = ctrl.sigma(24)
+    assert 0.1 < decayed < 0.4
+    restored = ae.NoiseController(ae.Explore(1.0, 0, "grad_norm", 4.0, None))
+    restored.load_state_dict(ctrl.state_dict(), torch.device("cpu"))
+    assert restored.sigma(24) == pytest.approx(decayed)
+
+    # grad_snr: stays near σ_max for aligned gradients, drops for canceling ±g, and resumes cleanly.
+    snr = ae.NoiseController(ae.Explore(1.0, 0, "grad_snr", 4.0, None))
+    assert snr.sigma(0) == 1.0
+    for _ in range(5):
+        p.grad = torch.ones(4)
+        snr.observe([p])
+    assert snr.sigma(5) == pytest.approx(1.0, abs=1e-5)
+    for step in range(40):
+        p.grad = torch.ones(4) if step % 2 == 0 else -torch.ones(4)
+        snr.observe([p])
+    assert 0.0 <= snr.sigma(45) < 0.2
+    snr_restored = ae.NoiseController(ae.Explore(1.0, 0, "grad_snr", 4.0, None))
+    snr_restored.load_state_dict(snr.state_dict(), torch.device("cpu"))
+    p.grad = torch.ones(4)
+    assert snr_restored.observe([p]) == pytest.approx(snr.observe([p]))
+    assert snr_restored.sigma(46) == pytest.approx(snr.sigma(46))
+
+    with pytest.raises(ValueError):
+        ae.NoiseController(ae.Explore(1.0, 0, "bogus", 4.0, None))
+    with pytest.raises(ValueError):
+        ae.NoiseController(ae.Explore(1.0, 0, "grad_norm", 0.0, None))
+
+
+def test_schedulefree_train_eval_and_resume(tmp_path):
+    model = load_model(TINY)
+    geometries = {name: PairGeometry(model.pair(name), model.value_count) for name in ("c512_k32", "lossless")}
+    images = ImageSet(torch.randint(0, 256, (40, 1, 32, 32), dtype=torch.uint8), "cpu")
+    store = ArtifactStore(tmp_path, None)
+    _teachers(model, geometries, images, store)
+    overrides = {
+        **FAST,
+        "optimizer": "schedulefree",
+        "batch_size": 4,
+        "warmup_steps": 4,
+        "integration_steps": 2,
+        "explore.noise_sigma": 1.0,
+        "explore.noise_mode": "grad_snr",
+        "explore.noise_half_life": 5.0,
+        "validation_batch_size": 4,
+        "validation_batch_count": 1,
+        "gallery_count": 2,
+    }
+    config = load(ae.AEStageConfig, "ae", overrides)
+
+    # Run 0..2, snapshot state_dict, then continue 2..4 alongside a resumed task.
+    task = ae.AETask(model, config, geometries, images, store)
+    assert task.optimizer.param_groups[0]["weight_decay"] == pytest.approx(0.01)
+    torch.manual_seed(11)
+    step0 = task.train_step()
+    assert task.optimizer.param_groups[0]["train_mode"] is True
+    assert step0["lr"] == pytest.approx(config.learning_rate / config.warmup_steps)
+    # AdamWScheduleFree divides p.grad in-place during step(); observed norm must differ from post-step p.grad norm.
+    post_step_norm = float(
+        torch.linalg.vector_norm(torch.stack([p.grad.norm() for p in task.encoder.parameters() if p.grad is not None]))
+    )
+    assert abs(step0["encoder_grad_norm"] - post_step_norm) > 1e-3
+
+    task.train_step()
+    snap_path = tmp_path / "snap.pt"
+    ae.checkpoint.save(task.state_dict(), snap_path)
+    assert task.optimizer.param_groups[0]["train_mode"] is False
+    # Continuing from step 2 after state_dict() must switch back to train_mode and match a fresh resumed task.
+    torch.manual_seed(99)
+    task.train_step()
+    task.train_step()
+    expected_weights = {k: v.clone() for k, v in task.weights()["modules"].items()}
+    expected_sigma = task.noise.sigma(task.step)
+    assert task.optimizer.param_groups[0]["train_mode"] is False
+
+    resumed = ae.AETask(model, config, geometries, images, store)
+    resumed.load_state_dict(ae.checkpoint.load(snap_path))
+    torch.manual_seed(99)
+    resumed.train_step()
+    resumed.train_step()
+    actual_weights = resumed.weights()["modules"]
+    assert resumed.noise.sigma(resumed.step) == pytest.approx(expected_sigma, rel=1e-6)
+    for key in expected_weights:
+        assert torch.allclose(expected_weights[key], actual_weights[key], atol=1e-6)

@@ -40,6 +40,8 @@ def install():
     if importlib.util.find_spec("lpap") is None:
         subprocess.run([sys.executable, "-m", "pip", "install", "-q", _source], check=True)
     elif os.environ.get("LPAP_FORCE_REINSTALL") == "1":
+        if importlib.util.find_spec("schedulefree") is None:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "schedulefree"], check=True)
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps", _source], check=True
         )
