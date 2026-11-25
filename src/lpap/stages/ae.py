@@ -89,8 +89,9 @@ class SideTerms:
 class Explore:
     """Exploration knobs (EXPERIMENTS.md). Defaults (0, 0, None) = the plain AE.
 
-    Annealed relative noise: training only, ``x̃ = x + σ(step)·rms(x).detach()·ε`` feeds LPAP and the
-    renderer for every pair; ``σ`` decays linearly from ``noise_sigma`` to 0 over ``noise_decay_steps``.
+    Annealed relative noise: training only, ``x̃ = x + σ(step)·rms(x)·ε`` (``rms`` kept live so encoder and
+    renderer optimize the same noisy objective) feeds LPAP and the renderer for every pair; ``σ`` decays
+    linearly from ``noise_sigma`` to 0 over ``noise_decay_steps``.
     """
 
     noise_sigma: float
@@ -101,6 +102,14 @@ class Explore:
         if self.noise_sigma <= 0 or self.noise_decay_steps <= 0:
             return 0.0
         return self.noise_sigma * max(0.0, 1.0 - step / self.noise_decay_steps)
+
+
+def add_relative_noise(energy: torch.Tensor, sigma: float) -> torch.Tensor:
+    """``x + σ · rms(x) · ε`` with ``rms`` live (reparameterized) to avoid detached-scale inflation."""
+    if sigma <= 0:
+        return energy
+    rms = energy.square().mean(-1, keepdim=True).add(1e-12).sqrt()
+    return energy + sigma * rms * torch.randn_like(energy)
 
 
 @dataclass(frozen=True)
@@ -286,10 +295,7 @@ class AETask:
         """
         config = self.config
         energy = self._encode(image)
-        seen = energy
-        if noise > 0:
-            rms = energy.detach().square().mean(-1, keepdim=True).sqrt()
-            seen = energy + noise * rms * torch.randn_like(energy)
+        seen = add_relative_noise(energy, noise)
         decoded, metrics = [], {}
         pair_sides: list[dict[str, torch.Tensor]] = []
         for name, geometry in self.geometries.items():

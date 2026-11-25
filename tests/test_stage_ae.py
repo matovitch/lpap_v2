@@ -173,3 +173,16 @@ def test_gather_footprint_of_known_encoders():
     box = torch.ones(1, 1, 3)
     area, span = ae.gather_footprint(lambda x: torch.nn.functional.conv1d(x, box, padding=1).squeeze(1), image, sites=4)
     assert torch.allclose(area, torch.tensor(3.0)) and torch.allclose(span, torch.tensor((2 / 3) ** 0.5))
+
+
+def test_add_relative_noise_keeps_rms_gradient_and_handles_zero():
+    torch.manual_seed(0)
+    x = torch.ones(8, 1024, requires_grad=True)
+    loss = ae.add_relative_noise(x, 1.0).square().mean()
+    (grad,) = torch.autograd.grad(loss, x)
+    # E[‖x + σ·rms(x)·ε‖² / N] = (1 + σ²) · mean(x²), so ∂/∂x · x ≈ 2(1 + σ²) = 4 (detached rms gives 2).
+    assert abs((grad * x).sum().item() - 4.0) < 0.2
+
+    zeros = torch.zeros(2, 64, requires_grad=True)
+    (zero_grad,) = torch.autograd.grad(ae.add_relative_noise(zeros, 1.0).square().mean(), zeros)
+    assert torch.isfinite(zero_grad).all()

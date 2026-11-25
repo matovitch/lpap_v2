@@ -188,10 +188,36 @@ on objects. Its 8-image render L2 is no better at 5k. The 15k check is whether t
   - *Caveat (Camille, 20:56): trajectory luck.* Paired arms share init and data order, then drift apart, so a
     single-seed gap is weak evidence. The sign must repeat on seed 2987. The control seed spread at 15k may also
     exceed the 1% measured at 5k.
-- **Energy-scale check (code reading, no compute).** σ0 1's energy is about 3× the control's at 15k. List every
-  place where the absolute scale of the energy matters (renderer input, surrogate and probe logits, `usage_kl`,
-  `signed_mass_tau`, LPAP thresholds). Then decide whether part of the −10% could come from scale, not from
-  exploration.
+- ~~**Energy-scale check (code reading, no compute).**~~ **Done 2026-11-25** (code reading + 15k `s2988` checkpoint measurements):
+  - *Invariant / equivariant:* exact LPAP (no absolute thresholds; `amplitudes` linear, discrete indices invariant),
+    `Surrogate` (`tokens / rms` with `rms_eps = 1e-6`, verified to 4 decimals at 0.33× and 3×), `weighted_ce`
+    (scale cancels in weights), `usage_kl`, `residual_share`, `gather_footprint`, `stage1_corr`, `energy_top10`.
+    Gradient clipping (`max_grad_norm = 1.0`) never triggers (0/600 logged steps).
+  - *Scale-sensitive:*
+    1. **`Decoder.forward`** has **no RMS normalization on `amplitudes`** (unlike `Surrogate`), and at `lr = 2.8e-5`
+       the Stage-4 input weights barely move (`amp.w` norm 8.42 vs 8.34). At 3× energy scale, `‖amp_wx‖ / ‖lane‖`
+       jumps from 0.45 → 1.39 (`c128_k16`) and 0.25 → 0.77 (`c512_k32`) before the first `LayerNorm`.
+    2. **`FlowField.input`** in the renderer (`Conv1d(1, 128, 1)` into `GroupNorm(1, 128)`) has virtually unchanged
+       `weight` (`0.630`) and `bias` (`0.600`), so `wx_rms / b_rms` jumps from 0.41 → 1.22 (`c128_k16`) and 0.40 → 1.24
+       (`c512_k32`), raising the input signal variance fraction inside `block[0]` ~4× (from ~15% to ~60%). Meanwhile
+       the Euler skip forces ~2.8× larger renderer velocities to cancel bigger spikes back into `[0, 1]`.
+    3. **`signed_mass`** scales as $\alpha^2$ above `tau = 0.1`, but `signed_mass_weight = 0.0` (inactive in S1).
+    4. **AdamW `weight_decay = 0.01`** (PyTorch default) is why `sig1`'s energy slowly relaxes once noise ends
+       (`std` 1.84 at 2k → 1.52 at 5k → 1.21 at 15k).
+  - *Why noise inflated the energy:* in `_forward`, `rms = energy.detach().square().mean(-1, keepdim=True).sqrt()`.
+    Because `rms` is **detached**, the renderer damps its gain by $\sim 1/(1 + \sigma^2)$ to attenuate the noise
+    (`l2_lossless` spikes to 40.0 at step 25 and drops to 13.4 by step 250 *before* energy inflates), while the
+    encoder's gradient ignores the detached noise-variance cost and pushes `|x|` up to restore image contrast
+    (`mean |x|` 0.29 at step 250 → 1.30 at step 1000). With $\sigma > 0$, renderer and encoder have no joint
+    equilibrium until $\sigma \to 0$. Under an anytime noise floor ($\sigma_\infty > 0$), this would inflate energy
+    indefinitely — **fix implemented:** `add_relative_noise` keeps `rms` live (`.add(1e-12).sqrt()`) so encoder and
+    renderer optimize the same expected noisy objective. Verified locally (500 steps, batch 4, σ0 = 1, 5060):
+    detached `rms` reversed and began inflating after step 250 (`val_e_std` 0.357 → 0.329 → 0.337 → 0.397), while
+    live `rms` settled cleanly at the joint equilibrium (`val_e_std` 0.357 → 0.285 → 0.221 → 0.226, lower lossless L2).
+  - *Verdict:* the basin change is genuine exploration (footprints and RMS-normalized galleries are strictly
+    scale-invariant, and scaling `sig1`'s energy down 0.33× into its frozen `c128` decoder still edges out control:
+    `probe_ce` 1.080 vs 1.098), **but** the unnormalized `Decoder` and `Renderer` inputs mean part of the −10% /
+    +0.06 magnitude could be a scale confound. Fixing `rms` stops noise-driven inflation going forward.
 - **S2: anytime training (draft, to settle before pre-registration).** *Principle (Camille, 23:17):* training
   should be an unbounded process that the compute budget truncates. Nothing should depend on the planned number
   of steps. Two parts of today's setup break this: the cosine LR down to `run.steps`, and a noise decay given
