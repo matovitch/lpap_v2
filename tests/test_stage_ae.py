@@ -287,3 +287,14 @@ def test_schedulefree_train_eval_and_resume(tmp_path):
     assert resumed.noise.sigma(resumed.step) == pytest.approx(expected_sigma, rel=1e-6)
     for key in expected_weights:
         assert torch.allclose(expected_weights[key], actual_weights[key], atol=1e-6)
+
+
+def test_registered_studies_load_cleanly():
+    from lpap import experiments
+
+    for arms in experiments.STUDIES.values():
+        for arm in arms:
+            cfg = load(ae.AEStageConfig, "ae", arm.overrides)
+            assert cfg.optimizer in ae.OPTIMIZERS
+            ctrl = ae.NoiseController(cfg.explore)
+            assert ctrl.sigma(0) == (cfg.explore.noise_sigma if cfg.explore.noise_sigma > 0 else 0.0)

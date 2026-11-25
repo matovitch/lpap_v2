@@ -39,8 +39,46 @@ S1 = [_noise_arm("s1", sigma, seed, stop_at=5000) for seed in SEEDS[:2] for sigm
 # session (≈ 4 h each): resumes each run from its 5k ``last.pt`` on HF.
 S1_R2 = {seed: [_noise_arm("s1", sigma, seed, stop_at=15000) for sigma in (0.0, 0.1, 0.3, 1.0)] for seed in SEEDS[:2]}
 
+
+def _anytime_arm(
+    study: str,
+    tag: str,
+    seed: int,
+    stop_at: int,
+    *,
+    noise_mode: str = "linear",
+    sigma: float = 0.0,
+    half_life: float = 0.0,
+) -> Arm:
+    overrides: dict[str, Any] = {
+        "optimizer": "schedulefree",
+        "seed": seed,
+        "run.steps": stop_at,
+        "run.stop_at": stop_at,
+        "explore.noise_sigma": sigma,
+        "explore.noise_decay_steps": 0,
+        "explore.noise_mode": noise_mode,
+        "explore.noise_half_life": half_life,
+    }
+    return Arm(f"{study}-{tag}-s{seed}", overrides)
+
+
+# S2: anytime training — Schedule-Free AdamW + gradient-driven relative noise (σ_max = 1.0, shared h = 500).
+# Nothing in the optimizer or noise controller depends on ``run.steps`` (which is only the truncation budget).
+# One seed per molab session (3 × 15k ≈ 4.5 h).
+S2 = {
+    seed: [
+        _anytime_arm("s2", "sf-control", seed, stop_at=15000),
+        _anytime_arm("s2", "sf-gnorm", seed, stop_at=15000, noise_mode="grad_norm", sigma=1.0, half_life=500.0),
+        _anytime_arm("s2", "sf-gsnr", seed, stop_at=15000, noise_mode="grad_snr", sigma=1.0, half_life=500.0),
+    ]
+    for seed in SEEDS[:2]
+}
+
 STUDIES: dict[str, list[Arm]] = {
     "s1": S1,
     "s1-r2-s2988": S1_R2[2988],
     "s1-r2-s2987": [arm for arm in S1_R2[2987] if arm.overrides["explore.noise_sigma"] in (0.0, 1.0)],  # confirmation
+    "s2-s2988": S2[2988],
+    "s2-s2987": S2[2987],
 }

@@ -179,7 +179,7 @@ on objects. Its 8-image render L2 is no better at 5k. The 15k check is whether t
   energy layout, reproducibly. σ0 0.1 and 0.3 were not confirmed (seed 2987 kept at 5k by design). This motivates S2:
   get the same exploration without a hand-tuned schedule.
 
-## Planned (not pre-registered yet)
+## Post-S1 follow-ups (done)
 
 - ~~**S1 confirmation: seed 2987 to 15k**~~ **Done 2026-11-25:** σ0 1 confirmed (−9.9%, see the seed 2987 results).
   Ran `s1-r2-s2987` with control and σ0 1 only, in one molab session.
@@ -218,37 +218,72 @@ on objects. Its 8-image render L2 is no better at 5k. The 15k check is whether t
     scale-invariant, and scaling `sig1`'s energy down 0.33× into its frozen `c128` decoder still edges out control:
     `probe_ce` 1.080 vs 1.098), **but** the unnormalized `Decoder` and `Renderer` inputs mean part of the −10% /
     +0.06 magnitude could be a scale confound. Fixing `rms` stops noise-driven inflation going forward.
-- **S2: anytime training (draft, to settle before pre-registration).** *Principle (Camille, 23:17):* training
-  should be an unbounded process that the compute budget truncates. Nothing should depend on the planned number
-  of steps. Two parts of today's setup break this: the cosine LR down to `run.steps`, and a noise decay given
-  in steps.
-  - **Optimizer:** schedule-free AdamW (Defazio et al., 2024, `schedulefree` package). It keeps the warmup,
-    has no decay, and its averaged iterate is evaluable at any step. It needs `optimizer.train()` / `.eval()`
-    switching around validation and checkpoints. Rungs then become plain truncations of a single run.
-  - **Noise driven by gradients instead of steps:**
-    - g is the encoder gradient; β is set by a half-life *h*, in steps. Two knobs: σ_max (relative, starting
-      at S1's 1.0) and *h*. Nothing else refers to the step count.
-    - **Primary form (Camille's proposal): gradient-norm EMA.** σ_t = σ_max · n_t / max_{s≤t} n_s, where
-      n_t = EMA_β(‖g‖). The running max makes it unit-free without a step count. The noise follows how hard
-      the encoder is still being pushed. Risk: with stochastic gradients ‖g‖ does not go to 0, so σ may settle
-      at a floor instead of vanishing. That is acceptable for an anytime process, but we have to measure it.
-    - **Alternative form: gradient signal-to-noise ratio.** σ_t = σ_max · ρ_t, where
-      ρ_t = ‖EMA_β(g)‖ / EMA_β(‖g‖) ∈ [0, 1]. ρ is high while gradients agree (early) and falls as they cancel
-      (near a basin), so it can go to 0. Its feedback is negative: more noise means noisier gradients, so ρ
-      falls and the noise falls with it.
-    - Both feedback loops (noise → gradient → noise) must be checked on the local GPU before molab: logged
-      σ_t trace, no oscillation, no collapse to 0 in the first few hundred steps.
-  - **Arms (seed 2988 first, then 2987; 3 × 15k from scratch ≈ 4.5h, one session):**
-    - (a) schedule-free, no noise;
-    - (b) schedule-free + gradient-norm-EMA noise (primary);
-    - (c) schedule-free + gradient-SNR noise (alternative);
-    - reference: the S1 15k cosine arms (control and σ0 1).
-  - **Draft hypotheses:**
-    - H6: (a) matches the cosine control at equal steps within the seed spread, so the optimizer swap alone is
-      neutral or better.
-    - H7: (b) beats (a) by more than the seed spread. It also reproduces σ0 1's signature (sparse, edge-aligned
-      energy; small, local footprints), with no step count anywhere in its configuration.
-    - H7′: same as H7 for (c). If only one of (b) and (c) holds, it becomes the default.
+
+## S2: anytime training (Schedule-Free AdamW + gradient-driven noise)
+
+**Question.** Can we remove both step-count dependencies (cosine LR down to `run.steps`, linear noise decay over
+`noise_decay_steps`) so training is an unbounded process truncated by compute, while matching or beating S1's
+`σ0 = 1` basin without energy inflation?
+
+**Intervention.**
+1. **Optimizer:** Schedule-Free AdamW (`schedulefree.AdamWScheduleFree`, Defazio et al. 2024) with
+   `lr = 2.8e-5`, `warmup_steps = 500`, `weight_decay = 0.01` (matching PyTorch `AdamW`'s default;
+   `AdamWScheduleFree` defaults to `0.0`). `optimizer.train()` runs during `train_step`; `optimizer.eval()` runs
+   before `validate`, `footprint`, `gradient_norms`, `gallery`, `state_dict`, and `weights` so evaluations and
+   checkpoints always use the averaged iterate $x_t$.
+2. **Live-`rms` relative noise:** `x̃ = x + σ_t · rms(x) · ε` with `rms` live (fixing S1's detached-`rms`
+   energy inflation).
+3. **Gradient-driven noise controller (`NoiseController`):** observes clipped encoder gradients $g_t$ strictly
+   *before* `optimizer.step()` (because `AdamWScheduleFree.step()` divides `p.grad` in-place). Half-life $h$ in
+   steps sets $\beta = 2^{-1/h}$; two knobs ($\sigma_{\max} = 1.0$, shared $h = 500 = \text{warmup\_steps}$),
+   nothing depends on `run.steps`:
+   - **`grad_norm` (primary, Camille's proposal):** $n_t = \beta n_{t-1} + (1 - \beta)\|g_t\|$ (zero-init, no
+     bias correction so step-0 spikes do not freeze the peak), $\sigma_t = \sigma_{\max} \cdot n_t / \max_{s \le t} n_s$.
+   - **`grad_snr` (alternative):** $m_t = \beta m_{t-1} + (1 - \beta) g_t$,
+     $n_t = \beta n_{t-1} + (1 - \beta)\|g_t\|$, $\sigma_t = \sigma_{\max} \cdot \|m_t\| / n_t \in [0, \sigma_{\max}]$
+     (bias correction cancels identically; theoretical stochastic floor is $\sigma_{\max}\sqrt{\ln 2 / (2h)}$).
+
+**Pre-launch feedback-loop probe (1k steps, batch 64, RTX PRO 6000, `h = 250`, `σ_max = 1.0`, seed 2988):**
+- Both controllers were stable (no wild oscillation) and confirmed the live-`rms` fix at full batch size:
+  zero energy inflation (`e_std`: 0.357 → 0.210 on `grad_norm` even at $\sigma \approx 1.0$ for 1,000 steps;
+  0.357 → 0.314 on `grad_snr`).
+- `grad_norm (h = 250)`: $\sigma$ dipped to `0.883` during warmup (step 400) and stayed `0.996–1.000` through
+  step 1000 while the encoder reorganized (`s1_corr = 0.657`, compact footprint `area = 13.3, span = 10.6`,
+  cumulative dose $\sum \sigma = 966$).
+- `grad_snr (h = 250)`: decayed smoothly (`1.00 → 0.65 → 0.28 → 0.09 → 0.041` at step 1000), closely matching
+  the random-walk floor formula $\sqrt{\ln 2 / 500} = 0.0372$. At `h = 250`, its cumulative dose was only `378`
+  (comparable to S1's weak `σ0 = 0.3` arm, with wider footprint `area = 16.9, span = 15.8`).
+- **Choice of shared $h = 500$:** matching `warmup_steps = 500` doubles `grad_snr`'s early exploration window
+  past warmup (dose ~750–900) and lowers its late random-walk floor to $\sqrt{\ln 2 / 1000} = 0.026$, while
+  keeping `grad_norm` near `1.0` during initial reorganization before decaying as $\|g_t\|$ declines, with one
+  shared knob across both arms.
+
+**Arms (`s2-s2988`, then `s2-s2987` confirmation; 3 × 15k from scratch ≈ 4.5h per session):**
+- `s2-sf-control-s<seed>`: schedule-free AdamW, no noise (`σ = 0`).
+- `s2-sf-gnorm-s<seed>`: schedule-free AdamW + `grad_norm` (`σ_max = 1.0, h = 500`).
+- `s2-sf-gsnr-s<seed>`: schedule-free AdamW + `grad_snr` (`σ_max = 1.0, h = 500`).
+- External reference: S1 15k cosine arms (`s1-control`, `s1-sig1`, noting S1 `sig1` used detached `rms`).
+
+**Predictions** (written before running):
+- **H6:** `sf-control` matches S1 cosine `control` (`image_l2` 9.01–9.04 at 15k) within or better than the seed
+  spread (~0.4%), confirming the schedule-free swap alone is neutral or positive.
+- **H7:** `sf-gnorm` beats `sf-control` by more than the seed spread at 15k and reproduces `σ0 = 1`'s signature
+  (sparse, edge-aligned energy; compact, local offline footprints) without inflating `energy_std` or using any
+  step-count schedule. Caveat to measure: if its late $\sigma_t$ floor stays high (~0.4–0.5), noisy late training
+  could hurt clean-eval `image_l2` even if it reaches the right basin.
+- **H7′:** `sf-gsnr` beats `sf-control` by more than the seed spread at 15k and reproduces the `σ0 = 1`
+  signature while decaying near its ~0.026 stochastic floor for clean late refinement.
+
+**Decision rule.**
+- Confirm the winning noise controller (or both, if close) plus `sf-control` on seed 2987 (`s2-s2987`), plus
+  offline footprints (`scripts/footprints.py`) and RMS-normalized 8-image galleries.
+- If `sf-gnorm` reaches the compact basin (footprints/gallery) but loses on `image_l2` strictly because of a
+  high late $\sigma$ floor, record that explicitly before deciding whether `grad_snr` becomes the default.
+- If neither `sf-gnorm` nor `sf-gsnr` reproduces S1 `sig1`'s −10% gain while `e_std` stays ~0.35, that also
+  directly tests how much of S1 `sig1`'s −10% came from the detached-`rms` scale inflation vs pure exploration.
+
+## Planned (not pre-registered yet)
+
 - **S3: encoder steps × exploration.** A 2 × 2 design: encoder 4 / 8 steps (renderer 4) × no exploration / the
   best exploration from S1 or S2. It tests whether escaping the basin needs a more expressive encoder.
 - **Learning-rate control.** LR × 3, to tell "stuck" from "slow". With schedule-free, this becomes a one-knob
