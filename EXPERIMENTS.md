@@ -282,6 +282,62 @@ on objects. Its 8-image render L2 is no better at 5k. The 15k check is whether t
 - If neither `sf-gnorm` nor `sf-gsnr` reproduces S1 `sig1`'s −10% gain while `e_std` stays ~0.35, that also
   directly tests how much of S1 `sig1`'s −10% came from the detached-`rms` scale inflation vs pure exploration.
 
+*Results, seed 2988 at 15k (2026-11-25, 17:42; study `s2-s2988`, RTX PRO 6000).* Validation `image_l2` ×1e-3
+at 5k / 7.5k / 10k / 12.5k / 15k, with S1 seed-2988 cosine arms as reference:
+
+| Run | 5k | 7.5k | 10k | 12.5k | 15k | vs `sf-control` | c128 | c256 | c512 | lossless | probe wacc c128 | `σ` @ 15k | cum. dose |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `s1-control-s2988` (ref) | 10.92 | 9.96 | 9.38 | 9.16 | 9.05 | (−11.0%) | 19.04 | 11.75 | 4.64 | 0.78 | 0.595 | 0 | 0 |
+| `s1-sig1-s2988` (ref, detached rms) | 11.26 | 9.41 | 8.72 | 8.36 | 8.15 | (−19.9%) | 17.74 | 10.15 | 3.78 | 0.92 | 0.655 | 0 | 1,250 |
+| `s2-sf-control-s2988` | 12.21 | 11.49 | 11.04 | 10.56 | **10.17** | — | 21.53 | 13.02 | 5.24 | 0.87 | 0.518 | 0 | 0 |
+| `s2-sf-gnorm-s2988` | 19.78 | 20.40 | 25.15 | 20.58 | **17.36** | +70.7% | 30.48 | 20.20 | 10.39 | 8.37 | 0.462 | 0.648 | 13,321 |
+| `s2-sf-gsnr-s2988` | 12.49 | 11.85 | 11.35 | 10.85 | **10.44** | +2.7% | 21.98 | 13.51 | 5.39 | 0.90 | 0.507 | 0.0195 | 739 |
+
+Offline gathering footprints (64 images × 128 sites, fp32) and full validation energy stats at 15k:
+
+| Run | area mean / med / cv | span mean / med | energy rms | kurtosis | `s1_corr` | `|s1|` corr |
+|---|---|---|---:|---:|---:|---:|
+| stage 1 | 7.1 / 6.6 / 0.26 | 5.5 / 5.0 | 0.370 | 7.30 | +1.000 | +1.000 |
+| `s1-control-s2988` | 41.3 / 33.4 / 0.60 | 25.4 / 22.8 | 0.396 | 14.55 | +0.401 | +0.094 |
+| `s1-sig1-s2988` | 26.2 / 20.9 / 0.61 | 18.0 / 13.8 | 1.211 | 17.92 | +0.455 | +0.205 |
+| `s2-sf-control-s2988` | 29.8 / 24.6 / 0.61 | 16.3 / 14.3 | 0.453 | 10.47 | +0.473 | +0.122 |
+| `s2-sf-gnorm-s2988` | **19.4 / 15.0 / 0.68** | **16.5 / 13.8** | **0.403** | 8.42 | +0.587 | +0.287 |
+| `s2-sf-gsnr-s2988` | 26.3 / 21.5 / 0.63 | 18.0 / 15.2 | 0.444 | 10.04 | +0.481 | +0.134 |
+
+- **Live-`rms` fix confirmed at 15k:** zero energy inflation on all three S2 arms (`rms` 0.40–0.45 vs `s1-sig1`'s
+  1.211), even under `sf-gnorm`'s 13,321 cumulative noise dose.
+- **H6 rejected (`sf-control` lags `s1-control` by +12.4%):** reusing cosine AdamW's peak `lr = 2.8e-5` left
+  Schedule-Free moving at roughly half speed from step 500 onward (`17.24` vs `16.37`). At 15k, `sf-control`
+  (`l2 = 10.17`, `area = 29.8`, `span = 16.3`, `kurt = 10.47`) matches `s1-control` around step ~6.5k and is still
+  falling steeply (`−0.39e-3` per 2.5k vs `−0.11e-3` on `s1-control`). Schedule-Free AdamW needs its own higher LR.
+- **H7 rejected on `image_l2`, but the pre-registered caveat occurred verbatim on `sf-gnorm`:**
+  - *Why `grad_norm` never annealed:* `‖g_t‖` is the norm of a *stochastic mini-batch* gradient, not the expected
+    gradient; even in noiseless `sf-control`, `encoder_grad_norm` only falls 46% over 15k (`0.217 → 0.117`), so
+    `n_t / n_max` has a structural floor of ~0.5–0.7. Closed-loop noise added a positive feedback loop: `egn`
+    spiked from `0.093` (step 4k) to `0.388` (step 10k), keeping `σ` pinned at `0.84–1.00` through step 11k and
+    still `0.65` at 15k. Because the renderer/decoders trained on 65–100% noise the whole time, clean renders
+    are heavily blurred and low-contrast (`lossless = 8.37e-3`, `c128 = 30.48e-3`).
+  - *Gallery & footprints:* despite the blurred renders, `sf-gnorm`'s RMS-normalized energy and `c128` survivors
+    are strikingly clean, edge-aligned, and coherent across all 8 images (sharper object contours than `sf-control`
+    and `sf-gsnr`), with the most compact, peaked area distribution of any run (`area 19.4 / 15.0`, `span 16.5 / 13.8`,
+    `rms = 0.403`). This confirms **heavy energy noise produces the compact edge-aligned basin without energy
+    inflation**, but `grad_norm` cannot turn the noise off to let the decoder/renderer refine cleanly.
+- **H7′ rejected (`sf-gsnr` +2.7% vs `sf-control`):** `grad_snr` solved the stochastic-floor problem completely
+  (`σ`: `0.52 @ 500 → 0.12 @ 1k → 0.024 @ 2.5k → 0.019` steady floor, zero feedback lock, clean `signed_mass = +0.129`),
+  **but** its early dose was too small and too brief while Schedule-Free was moving slowly (`dose = 445` by step 1k,
+  `507` by 2.5k vs `s1-sig1`'s `1,250`). In the gallery and footprint histograms, `sf-gsnr` stays in the same broad,
+  scattered-dot basin as `sf-control` (`area` flat plateau, `kurt = 10.04` vs `10.47`, `s1_corr = +0.481` vs `+0.473`).
+- **Decision:** skip `s2-s2987` confirmation — all three hypotheses failed cleanly on seed 2988 with unambiguous
+  mechanistic causes, so replicating the current S2 settings would waste ~4.5h of GPU time. Two cleanly separable
+  questions remain before an S2b anytime retry:
+  1. **Schedule-Free LR:** find the LR (e.g. 2×–5× `2.8e-5`) where `sf-control` matches or beats cosine `s1-control`
+     at 15k (and verify `s1-sig1` with live `rms` on cosine AdamW to isolate pure exploration gain from S1's scale
+     inflation).
+  2. **Noise turn-off with sufficient early dose:** `grad_snr` turns off cleanly where `grad_norm` cannot, but
+     decayed before delivering S1's ~1,250 dose (and sits on a `~0.02` random-walk floor). Options: larger `h`
+     and/or `σ_max` with floor subtraction `max(0, snr - c·√(ln 2 / (2h)))`, or gating a higher initial `σ` by
+     `grad_snr` once SF's LR is tuned.
+
 ## Planned (not pre-registered yet)
 
 - **S3: encoder steps × exploration.** A 2 × 2 design: encoder 4 / 8 steps (renderer 4) × no exploration / the
