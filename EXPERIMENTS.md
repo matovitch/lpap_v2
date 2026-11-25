@@ -377,6 +377,73 @@ Offline gathering footprints (64 images × 128 sites, fp32) and full validation 
   back near `s1-control` despite compact footprints, inspect the unnormalized `Decoder`/`Renderer` input scale
   before adding more exploration noise.
 
+*Results, seed 2988 at 15k (2026-11-26, 00:00; study `s2a-s2988`, RTX PRO 6000).* Validation `image_l2` ×1e-3
+at 5k / 7.5k / 10k / 12.5k / 15k, with S1 cosine and S2 `sf 1×` arms as reference:
+
+| Run | 5k | 7.5k | 10k | 12.5k | 15k | vs `s1-ctrl` | c128 | c256 | c512 | lossless | `kept128` | `pwacc128` | `ukl` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `s1-control-s2988` (ref) | 10.92 | 9.96 | 9.38 | 9.16 | 9.05 | — | 19.04 | 11.75 | 4.64 | 0.78 | 0.820 | 0.595 | 0.179 |
+| `s1-sig1-s2988` (ref, detached rms) | 11.26 | 9.41 | 8.72 | 8.36 | 8.15 | −10.0% | 17.74 | 10.15 | 3.78 | 0.92 | 0.819 | 0.655 | 0.250 |
+| `s2-sf-control-s2988` (ref, SF 1×) | 12.21 | 11.49 | 11.04 | 10.56 | 10.17 | +12.4% | 21.53 | 13.02 | 5.24 | 0.87 | 0.770 | 0.518 | 0.088 |
+| `s2a-live-sig1-s2988` (live rms) | 12.39 | 11.36 | 10.08 | 9.65 | **9.40** | +3.9% | 19.22 | 12.04 | 5.07 | 1.28 | 0.753 | 0.630 | 0.143 |
+| `s2a-sf-lr3x-s2988` (SF 3×) | 10.30 | 9.44 | 8.78 | 8.38 | **8.09** | −10.6% | 17.10 | 10.44 | 4.12 | 0.69 | 0.865 | 0.671 | 0.201 |
+| `s2a-sf-lr6x-s2988` (SF 6×) | 8.44 | 7.53 | 6.94 | 6.57 | **6.33** | **−30.1%** | **13.65** | **8.12** | **3.05** | 0.50 | **0.898** | 0.782 | 0.435 |
+| `s2a-sf-lr10x-s2988` (SF 10×) | 7.95 | 7.33 | 6.94 | 6.71 | **6.49** | **−28.3%** | 13.95 | 8.33 | 3.19 | **0.47** | 0.868 | **0.804** | 0.330 |
+
+Independent fp32 forensic audit (uncompiled exact LPAP on `valA` and 256 completely unseen validation images
+`valB`), offline gathering footprints (64 images × 128 sites, fp32), and relative weight displacement from
+Stage 1/3/4 init (`‖W − W₀‖ / ‖W₀‖`) at 15k:
+
+| Run | `valB` L2 (`c128`) | energy rms | `s1_corr` | `maxP` (`>50%` / `>80%`) | `bEnt` / `bMaxP` | `area` mean / med / cv | `span` mean / med | `dW` enc / ren / dec / sur |
+|---|---:|---:|---:|---:|---|---|---|---:|
+| stage 1 | — | 0.370 | +1.000 | — | — | 7.1 / 6.6 / 0.26 | 5.5 / 5.0 | 0 / 0 / 0 / 0 |
+| `s1-control-s2988` | 8.94 (19.15) | 0.396 | +0.406 | 0.38 (0 / 0) | 0.738 / 0.180 | 41.3 / 33.4 / 0.60 | 25.4 / 22.8 | 5.4% / 9.7% / 6.3% / 7.6% |
+| `s1-sig1-s2988` | 7.99 (17.50) | 1.211 | +0.465 | 0.60 (4 / 0) | 0.730 / 0.198 | 26.2 / 20.9 / 0.61 | 18.0 / 13.8 | 6.9% / 10.2% / 6.4% / 8.0% |
+| `s2a-live-sig1-s2988` | 9.32 (19.22) | 0.391 | +0.491 | 0.40 (0 / 0) | 0.738 / 0.180 | 32.1 / 28.5 / 0.46 | 22.9 / 21.5 | 5.5% / 9.4% / 6.2% / 7.8% |
+| `s2a-sf-lr3x-s2988` | 7.83 (16.81) | 0.450 | +0.377 | 0.27 (0 / 0) | 0.738 / 0.181 | 40.5 / 32.8 / 0.60 | 20.1 / 18.0 | 9.9% / 17.4% / 11.4% / 15.1% |
+| `s2a-sf-lr6x-s2988` | **6.03 (13.15)** | 0.538 | +0.317 | 0.72 (4 / 0) | 0.969* / 0.203 | **29.5 / 25.4 / 0.50** | **13.8 / 12.3** | 15.0% / 24.4% / 16.0% / 22.3% |
+| `s2a-sf-lr10x-s2988` | **6.14 (13.33)** | 0.513 | +0.281 | **0.38 (0 / 0)** | 0.965* / 0.214 | 69.2 / 63.4 / 0.40 | 28.6 / 27.0 | 20.9% / 31.7% / 20.3% / 30.2% |
+
+*\*Note on `bEnt`: `s2a-sf-lr6x` and `s2a-sf-lr10x` rows report exact per-bucket `code.probes` normalized entropy
+(`0.969 / 0.965`, `bMaxP = 0.203 / 0.214`); on `s2a-sf-lr6x`, the same metric measured on `sources % 16` gave
+`0.727` vs `0.738` on `s1-control` — no fixed-support collapse under either definition.*
+
+- **H8 rejected (`s2a-live-sig1-s2988`: `9.40`, +3.9% vs `s1-control`):** fixing detached-`rms` energy inflation
+  kept `rms = 0.391` (vs `s1-sig1`'s `1.211`) and erased *all* of S1 `sig1`'s −10.0% gain, leaving `s2a-live-sig1`
+  behind `s1-control` across every pair (`lossless = 1.28` vs `0.78`, `kept128 = 0.753` vs `0.820`). It still
+  retained modestly tighter footprints (`area 32.1`, `span 22.9` vs `41.3 / 25.4`) and clean edge-aligned energy
+  in the gallery, strongly confirming the energy-scale audit hypothesis: S1 `sig1`'s −10% gain at `lr = 2.8e-5`
+  was largely an indirect input-gain boost from 3× `rms` inflation into the unnormalized `Decoder`/`Renderer`,
+  while pure noise at a slow LR spent 2.5k of the 15k cosine budget without catching up.
+- **H9 strongly confirmed (`s2a-sf-lr6x`: `6.33`, −30.1%; `s2a-sf-lr10x`: `6.49`, −28.3%; `s2a-sf-lr3x`: `8.09`,
+  −10.6%):**
+  - *Real, not a bug:* independent fp32 exact-LPAP matches logged `valA` to 3 digits and generalizes even better
+    to unseen `valB` (`6.03` for `6×`, `6.14` for `10×`); 8-image galleries show visibly sharper `c128` (`15.6e-3`
+    / `15.4e-3`) and `c256` (`8.9e-3` / `9.0e-3`) renders across all images; `rms` stays `0.51–0.54`, parameter
+    norms are unchanged, `support_entropy = 0.979 / 0.975`, and a constant per-bucket majority prior only gets
+    `bMaxP = 20.3% / 21.4%` while the decoder reaches `pwacc128 = 78.2% / 80.4%` (`swacc128 = 96.3% / 96.5%`).
+  - *Why it happened ("slow", not "stuck"):* at `lr = 2.8e-5`, the baseline AE barely moved off initialization
+    (`enc_dW = 5.4%`, `dec_dW = 6.3%`). Raising LR under Schedule-Free (`3× → 6× → 10×`) let all four modules
+    co-adapt (`15–32%` relative weight displacement), answering the planned "stuck vs slow" control decisively.
+  - *Crossover and two distinct coding regimes (`lr6x` vs `lr10x`):* `lr10x` led early by −9.6% at step 3k
+    (`8.92` vs `9.86`), tied `lr6x` at step 10k (`6.94` vs `6.94`), and finished +2.5% behind at 15k (`6.49` vs
+    `6.33`). Crucially, the two arms landed in different representation basins with similar L2:
+    - **`sf-lr6x` (local, ultra-sparse):** footprint peaked at step ~4.5k (`area 43, span 25.5`) then contracted
+      steadily to `area med = 25.4, span med = 12.3` (tightest span of any run), concentrating `89.8%` of energy
+      into `c128` (`top10 = 87.5%`), with modestly higher `usage_kl = 0.435` (`maxP = 0.72`, 4 sites >50%).
+    - **`sf-lr10x` (global, ultra-uniform):** footprint expanded to `area med = 63.4, span med = 27.0` (peaking at
+      step 11k `87.3 / 35.8` and only beginning to contract over the last 4k steps), with lower sparsity
+      (`kept128 = 86.8%`, `top10 = 83.8%`) but the highest `pwacc128` (`0.804`), lowest `lossless` (`0.47e-3`),
+      lower `usage_kl` (`0.330`), and zero sites >50% (`maxP = 0.38`, `0` dead sites).
+  - Both `sf-lr6x` and `sf-lr10x` are still improving steeply at 15k (`6.94 → 6.33` and `6.94 → 6.49` over the
+    final 5k steps) with no plateau in sight.
+- **Open questions for next study (not yet pre-registered):**
+  1. Separate LR from optimizer: test cosine AdamW at `6×` (`1.68e-4`) alongside a seed-2987 confirmation of
+     `sf-lr6x`.
+  2. Longer horizon / anytime resume: continue `sf-lr6x` (and/or `sf-lr10x`, whose footprint just turned downward)
+     to 30k–45k from the 15k checkpoints.
+  3. Re-evaluate exploration noise (if needed at all) only at the calibrated LR, and watch `usage_kl` on `lr6x`.
+
 ## Planned (not pre-registered yet)
 
 - **S3: encoder steps × exploration.** A 2 × 2 design: encoder 4 / 8 steps (renderer 4) × no exploration / the
