@@ -154,9 +154,35 @@ each run divided by its own rms, the control, σ0 0.1 and σ0 0.3 show the same 
 σ0 1 is a different solution: the energy follows object edges and structure, and its c128 survivors cluster
 on objects. Its 8-image render L2 is no better at 5k. The 15k check is whether this layout persists and pays off.
 
+*Rung 2 results, seed 2987 at 15k (2026-11-25, 09:40; study `s1-r2-s2987`, control and σ0 1 only).* Validation
+`image_l2` ×1e-3 at 5k / 7.5k / 10k / 12.5k / 15k:
+
+| σ0 | 5k | 7.5k | 10k | 12.5k | 15k | vs control | c128 | c512 | probe wacc c128 | energy std at 15k |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 11.04 | 9.96 | 9.37 | 9.10 | 9.01 | — | 19.01 | 4.63 | 0.592 | 0.41 |
+| 1 | 10.92 | 9.23 | 8.68 | 8.33 | **8.12** | **−9.9%** | 17.66 | **3.75** | **0.650** | 1.13 |
+
+- **σ0 1 is confirmed on two seeds.** Paired gap at 15k: −10.0% (seed 2988) and −9.9% (seed 2987). The control seed
+  spread at 15k is 0.4% (9.05 vs 9.01), so the gap is about 25× the spread. c512 (−19%), c128 (−7%) and probe
+  weighted accuracy (+0.06) improve the same way on both seeds. The trajectories differ only before 7.5k: σ0 1 is
+  worst at 5k on seed 2988 and slightly ahead on seed 2987.
+- Energy is inflated on this seed too (std 1.13 vs 0.41). The energy-scale check is still open.
+- Offline footprints (64 images × 128 sites), area mean / median / cv and span median, 5k → 15k:
+  control 24.9 / 21.3 / 0.54 → 43.0 / 36.0 / 0.57, span 14.5 → 20.0;
+  **σ0 1 24.6 / 22.2 / 0.41 → 25.8 / 21.1 / 0.56, span 18.5 → 13.3**. Same pattern as seed 2988: the control's
+  footprints grow by ~70%, while σ0 1's stay at the same area and become more local. **The H3-alt rejection and the
+  "small, local footprints" reading now hold on both seeds.**
+- Gallery (standard format): σ0 1's c128 survivors sit on object contours (the insect, the figure, the dog), and its
+  c128/c256 renders keep the object shapes. The control's survivors are scattered and texture-like. This is the
+  same qualitative split as seed 2988.
+- **S1 conclusion:** a strong early exploration noise (σ0 1, relative, 2.5k linear decay) finds a different and better
+  energy layout, reproducibly. σ0 0.1 and 0.3 were not confirmed (seed 2987 kept at 5k by design). This motivates S2:
+  get the same exploration without a hand-tuned schedule.
+
 ## Planned (not pre-registered yet)
 
-- **S1 confirmation: seed 2987 to 15k** (`s1-r2-s2987`), one molab session.
+- ~~**S1 confirmation: seed 2987 to 15k**~~ **Done 2026-11-25:** σ0 1 confirmed (−9.9%, see the seed 2987 results).
+  Ran `s1-r2-s2987` with control and σ0 1 only, in one molab session.
   - **Gate** (fixed before the 15k results): if no σ0 arm of `s1-r2-s2988` beat control by more than 1% at 15k,
     seed 2987 would be skipped. The gate passed (see the rung 2 results).
   - *Caveat (Camille, 20:56): trajectory luck.* Paired arms share init and data order, then drift apart, so a

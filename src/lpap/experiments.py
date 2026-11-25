@@ -46,5 +46,5 @@ S1_R2 = {
 STUDIES: dict[str, list[Arm]] = {
     "s1": S1,
     "s1-r2-s2988": S1_R2[2988],
-    "s1-r2-s2987": S1_R2[2987],
+    "s1-r2-s2987": [arm for arm in S1_R2[2987] if arm.overrides["explore.noise_sigma"] in (0.0, 1.0)],  # confirmation
 }
